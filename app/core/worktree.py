@@ -130,3 +130,20 @@ async def keep_previous(repo: str, branch: str | None, worktree: str | None) -> 
     await _git(repo, "branch", "-D", prev)
     code, _ = await _git(repo, "branch", "-m", branch, prev)
     return prev if code == 0 else None
+
+
+async def staleness(repo: str, branch: str) -> tuple[int, list[str]]:
+    """Насколько ветка агента отстала от main: (коммитов в main после точки ветвления,
+    файлы, которые менялись и там, и там — кандидаты на конфликт при мердже)."""
+    base = await default_branch(repo)
+    code, fork = await _git(repo, "merge-base", base, branch)
+    if code != 0 or not fork:
+        return 0, []
+    _, behind = await _git(repo, "rev-list", "--count", f"{fork}..{base}")
+    behind_n = int(behind or 0)
+    if behind_n == 0:
+        return 0, []
+    _, main_files = await _git(repo, "diff", "--name-only", f"{fork}..{base}")
+    _, br_files = await _git(repo, "diff", "--name-only", f"{fork}..{branch}")
+    overlap = sorted(set(main_files.split()) & set(br_files.split()))
+    return behind_n, overlap

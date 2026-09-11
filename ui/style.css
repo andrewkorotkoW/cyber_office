@@ -75,3 +75,6 @@ pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff
 .answer code { font:12px ui-monospace,Menlo,monospace; background:var(--card); padding:1px 5px }
 .answer pre.code { font:12px/1.4 ui-monospace,Menlo,monospace; background:var(--card); padding:8px; overflow:auto }
 ::-webkit-scrollbar { width:10px; height:10px } ::-webkit-scrollbar-thumb { background:var(--line) } ::-webkit-scrollbar-track { background:var(--bg) }
+
+.term { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:8px 10px; max-height:32vh; overflow:auto; white-space:pre-wrap }
+.term .line { padding:1px 0; border-bottom:1px dashed var(--line) } .term .line.tool { color:var(--blue) } .term .line.state { color:var(--warn) }

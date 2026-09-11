@@ -75,6 +75,9 @@ class Office:
             task.diff_stat = await worktree.diff_stat(task.repo, branch)
             if res.ok:
                 task.status = "review"; task.note("готово, ждёт ревью")
+                task.behind_main, task.overlap_files = await worktree.staleness(task.repo, branch)
+                if task.overlap_files:
+                    task.note(f"ветка отстала от main на {task.behind_main}, пересекается: {', '.join(task.overlap_files[:5])}")
                 memory.append(a.name, task.title, task.repo, res.text)
             else:
                 task.status = "failed"; task.note(f"ошибка: {res.error}")
@@ -105,15 +108,28 @@ class Office:
             await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
             t.status = "done"; t.note("одобрено, влито в main")
         else:
+            # конфликт: не роняем задачу в «ошибка», а сразу отправляем агента переносить
+            # готовую работу поверх свежего main (retry сохраняет прошлую ветку и даёт подсказку)
             t.status = "failed"
-            t.note("конфликт с main (другая задача изменила те же файлы) — нажми «Повторить», "
-                   "агент сделает заново поверх свежего main")
+            t.note("конфликт с main — автоматически запущен перенос поверх свежего main")
+            self.store.update(t)
+            await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
+            await self.retry(t.id, "Мердж в main конфликтнул. Перенеси свою работу поверх актуального main.")
+            return False, "конфликт: задача отправлена на перенос поверх main"
         self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
-        if ok:
-            await self._check_mission(t.mission_id)
-            self.kick_all()          # зависимые задачи могли разблокироваться
+        await self._check_mission(t.mission_id)
+        await self._refresh_staleness(t.repo)
+        self.kick_all()          # зависимые задачи могли разблокироваться
         return ok, out
+
+    async def _refresh_staleness(self, repo: str) -> None:
+        """main изменился — пересчитать отставание у всех задач этого репо, ждущих ревью."""
+        for t in self.store.by_status("review"):
+            if t.repo == repo and t.branch:
+                t.behind_main, t.overlap_files = await worktree.staleness(repo, t.branch)
+                self.store.update(t)
+                await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
 
     async def reject(self, task_id: str, reason: str = "") -> bool:
         t = self.store.get(task_id)
@@ -140,6 +156,7 @@ class Office:
         if extra:
             t.prompt += f"\n\nУточнение от ревьюера: {extra}"
         t.status, t.branch, t.worktree, t.result, t.diff_stat = "todo", None, None, None, None
+        t.behind_main, t.overlap_files = 0, []
         t.note("отправлена заново"); self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         self.kick(t.agent)

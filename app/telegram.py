@@ -95,6 +95,9 @@ def _task_card(t) -> str:
     if t.diff_stat:
         lines.append("")
         lines.append("<code>" + ESC(t.diff_stat.strip()[-600:]) + "</code>")
+    if t.status == "review" and t.overlap_files:
+        lines.append(f"\n⚠️ Ветка отстала от main на {t.behind_main}; пересекается по файлам: "
+                     f"{ESC(', '.join(t.overlap_files[:4]))}. При конфликте офис сам перенесёт работу поверх main.")
     if t.status == "failed" and t.log:
         lines.append("")
         lines.append("⚠️ " + ESC(t.log[-1]))

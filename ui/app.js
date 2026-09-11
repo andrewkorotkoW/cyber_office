@@ -61,6 +61,7 @@ function renderBoard() {
       c.innerHTML = `<div class="t">${t.mission_id ? '🎯 ' : ''}${esc(t.title)}</div>
         <div class="m">${esc(agentTitle(t.agent))} · ${STATUS_RU[t.status]} · ${esc(t.repo.split('/').pop())}${costLabel(t.cost_usd)}</div>
         ${waiting ? `<div class="dep">⏳ ждёт: ${esc(depNames.join(', '))}</div>` : ''}
+        ${t.status === 'review' && t.overlap_files && t.overlap_files.length ? `<div class="dep">⚠️ отстала от main на ${t.behind_main}, пересекается: ${esc(t.overlap_files.slice(0, 3).join(', '))}</div>` : (t.status === 'review' && t.behind_main ? `<div class="m">↻ main ушёл вперёд на ${t.behind_main}, файлы не пересекаются</div>` : '')}
         ${t.result && t.status !== 'todo' ? `<div class="res">💬 ${esc(summary(t.result))}</div>` : ''}
         ${t.diff_stat && t.status === 'review' ? `<div class="m">${esc(t.diff_stat.trim().split('\n').pop())}</div>` : ''}
         ${t.status === 'review' ? `<div class="actions"><button class="small ok" data-act="approve">Одобрить</button><button class="small" data-act="reject">Отклонить</button></div>` : ''}
@@ -102,16 +103,32 @@ async function openTask(id) {
     ${t.cost_usd ? `<div class="log">Расход: ≈$${t.cost_usd.toFixed(2)} по тарифу API · ${t.turns} ходов · подписка Max, деньги не списываются</div>` : ''}
     ${t.diff_stat ? `<label>Изменения</label><div class="log">${esc(t.diff_stat)}</div>` : ''}
     <div id="t-diff"></div>
+    <label>Терминал агента ${t.status === 'running' ? '· live' : ''}</label><div class="term" id="t-term"></div>
     <label>Хроника</label><div class="log">${esc(t.log.join('\n'))}</div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end" id="t-actions"></div>`;
   const acts = $('#t-actions');
   if (t.status === 'review') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'reject')">Отклонить</button><button class="ok" onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'approve')">Одобрить и влить в main</button>`;
   if (t.status === 'rejected' || t.status === 'failed') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'retry')">Повторить с уточнением</button>`;
   $('#dlg-task').showModal();
+  OPEN_TASK = t.id;
+  const evs = await api(`/api/tasks/${t.id}/events`);
+  const termBox = $('#t-term'); termBox.innerHTML = '';
+  for (const ev of evs) termAppend(termBox, ev);
+  termBox.scrollTop = termBox.scrollHeight;
   if (t.branch && (t.status === 'review' || t.status === 'failed')) {
     const { diff } = await api(`/api/tasks/${t.id}/diff`);
     $('#t-diff').innerHTML = `<label>Diff к main</label><pre class="diff">${diff ? colorDiff(diff) : '(пусто)'}</pre>`;
   }
+}
+
+let OPEN_TASK = null;
+$('#dlg-task').addEventListener('close', () => { OPEN_TASK = null; });
+function termAppend(box, ev) {
+  if (ev.kind !== 'agent.tool' && ev.kind !== 'agent.text' && ev.kind !== 'agent.state') return;
+  const d = document.createElement('div'); d.className = 'line ' + ev.kind.split('.')[1].replace('state', 'state').replace('tool', 'tool');
+  const text = ev.kind === 'agent.tool' ? '⚙ ' + ev.data.summary : ev.kind === 'agent.text' ? ev.data.text : '■ ' + ev.data.state;
+  d.textContent = text; box.appendChild(d);
+  while (box.children.length > 400) box.firstChild.remove();
 }
 
 function fillForm() {
@@ -151,6 +168,7 @@ function connect() {
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
   ws.onmessage = (m) => {
     const ev = JSON.parse(m.data); const who = ev.agent ? agentTitle(ev.agent) : 'офис';
+    if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-term'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
     if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary);
     else if (ev.kind === 'agent.text') termLine('text', who, ev.data.text);
     else if (ev.kind === 'agent.state') { Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state); }

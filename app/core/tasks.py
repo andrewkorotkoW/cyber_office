@@ -52,6 +52,8 @@ class Task:
     log: list[str] = field(default_factory=list)   # короткая хроника для карточки
     mission_id: str | None = None
     depends_on: list[str] = field(default_factory=list)   # id задач, которые должны быть done
+    behind_main: int = 0                        # на сколько коммитов ветка отстала от main
+    overlap_files: list[str] = field(default_factory=list)   # файлы, изменённые и в main, и в ветке
 
     def touch(self) -> None:
         self.updated_at = datetime.now().isoformat(timespec="seconds")

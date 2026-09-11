@@ -25,7 +25,7 @@ class Event:
 
 
 class EventBus:
-    def __init__(self, history: int = 500) -> None:
+    def __init__(self, history: int = 3000) -> None:
         self._listeners: list[Listener] = []
         self.history: list[Event] = []
         self._max = history

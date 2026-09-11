@@ -86,9 +86,11 @@ async def test_merge_conflict_marks_failed_and_retry_rebases(workspace):
     b = await office.create_task("B", "b", workspace["repo"], "dwight")
     assert await _wait(lambda: store.get(a.id).status == "review" and store.get(b.id).status == "review")
     ok, _ = await office.approve(a.id); assert ok
+    b_task = store.get(b.id)
+    assert b_task.behind_main >= 1 and "README.md" in b_task.overlap_files   # предупреждение до мерджа
     ok, _ = await office.approve(b.id); assert not ok
-    assert store.get(b.id).status == "failed" and "конфликт" in store.get(b.id).log[-1]
-    assert await office.retry(b.id)
+    # конфликт: офис сам отправил задачу на перенос поверх main (retry), а не уронил в failed
+    assert store.get(b.id).status in ("todo", "running", "review")
     assert "-prev" in store.get(b.id).prompt                  # агенту подсказали, где прошлая работа
     branches = subprocess.run(["git", "branch", "--list", f"agent/{b.id}-prev"], cwd=workspace["repo"],
                               capture_output=True, text=True).stdout

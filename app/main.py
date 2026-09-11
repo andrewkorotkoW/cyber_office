@@ -158,6 +158,13 @@ async def create_task(body: TaskIn) -> dict:
     return {"id": t.id}
 
 
+@app.get("/api/tasks/{task_id}/events")
+async def task_events(task_id: str) -> list[dict]:
+    """История ленты по одной задаче — для живого терминала в карточке."""
+    from dataclasses import asdict
+    return [asdict(e) for e in bus.history if e.task_id == task_id][-300:]
+
+
 @app.get("/api/tasks/{task_id}/diff")
 async def task_diff(task_id: str) -> dict:
     return {"diff": await office.diff(task_id)}

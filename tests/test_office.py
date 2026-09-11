@@ -32,6 +32,10 @@ async def test_full_cycle_review_merge(workspace):
     assert await _wait_status(store, t.id, "review")
     t = store.get(t.id)
     assert t.branch == f"agent/{t.id}" and t.diff_stat and "notes_michael" in t.diff_stat
+    for _ in range(40):                      # статус review выставляется чуть раньше, чем агент освобождается
+        if roster.get("michael").state == "idle":
+            break
+        await asyncio.sleep(0.05)
     assert roster.get("michael").state == "idle"
     assert {"task.created", "agent.state", "agent.tool", "agent.text", "task.updated"} <= set(seen)
 
