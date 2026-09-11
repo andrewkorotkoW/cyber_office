@@ -303,8 +303,9 @@ function renderTestsRuns(runs) {
   if (!runs.length) { box.innerHTML = '<div class="log">Прогонов ещё не было.</div>'; return; }
   for (const r of runs) {
     const d = document.createElement('div'); d.className = 'run-row'; d.style.borderLeftColor = RUN_STATUS_COLOR[r.status] || 'var(--mute)';
-    d.innerHTML = `<div class="t">${esc(r.target || 'весь набор')}</div>
+    d.innerHTML = `<div class="t"><span>${esc(r.target || 'весь набор')}</span><button class="small" data-report="${esc(r.id)}">📊 Отчёт</button></div>
       <div class="m">${esc(r.started_at)} · ${RUN_STATUS_RU[r.status] || r.status}${r.duration ? ' · ' + r.duration.toFixed(1) + 'с' : ''}</div>`;
+    d.querySelector('[data-report]').addEventListener('click', (e) => { e.stopPropagation(); openReport(r.id, r.repo || TESTS_REPO); });
     d.addEventListener('click', () => openRunDetail(r.id));
     box.appendChild(d);
   }
@@ -331,6 +332,139 @@ async function openRunDetail(run_id) {
 
 $('#btn-tests-refresh').addEventListener('click', loadTestsTree);
 $('#btn-tests-run-all').addEventListener('click', () => runTests(null));
+
+// ---- отчёт по прогону (Allure-style)
+const STATUS_COLORS = { passed: '#5acd96', failed: '#f05a46', broken: '#f2c14e', skipped: '#8a93a3', unknown: '#8a93a3' };
+const STATUS_RU_ALLURE = { passed: 'пройдено', failed: 'провалено', broken: 'сломано', skipped: 'пропущено', unknown: 'неизвестно' };
+let REPORT = null;
+let REPORT_FILTER = new Set(['passed', 'failed', 'broken', 'skipped', 'unknown']);
+let REPORT_SEARCH = '';
+
+function donutSvg(counts) {
+  const order = ['passed', 'failed', 'broken', 'skipped', 'unknown'];
+  const total = order.reduce((s, k) => s + (counts[k] || 0), 0);
+  const R = 42, C = 2 * Math.PI * R;
+  if (!total) return `<svg viewBox="0 0 120 120" width="120" height="120"><circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--line)" stroke-width="16"></circle></svg>`;
+  let offset = 0;
+  const arcs = order.filter(k => counts[k]).map(k => {
+    const dash = (counts[k] / total) * C;
+    const el = `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${STATUS_COLORS[k]}" stroke-width="16" stroke-dasharray="${dash} ${C - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 60 60)"><title>${STATUS_RU_ALLURE[k]}: ${counts[k]}</title></circle>`;
+    offset += dash; return el;
+  }).join('');
+  return `<svg viewBox="0 0 120 120" width="120" height="120">${arcs}<text x="60" y="66" text-anchor="middle" font-size="20" fill="var(--text)">${total}</text></svg>`;
+}
+
+function trendSvg(trend) {
+  if (!trend.length) return '<div class="log">Прогонов ещё не было.</div>';
+  const W = Math.max(240, trend.length * 26), H = 90, PAD = 6;
+  const bw = (W - PAD * 2) / trend.length;
+  const maxDur = Math.max(...trend.map(r => r.duration || 0), 0.001);
+  const bars = trend.map((r, i) => {
+    const h = Math.max(2, r.pass_rate * (H - PAD * 2));
+    const x = PAD + i * bw, y = H - PAD - h;
+    const color = STATUS_COLORS[r.status] || RUN_STATUS_COLOR[r.status] || 'var(--mute)';
+    return `<rect x="${x + 2}" y="${y}" width="${Math.max(1, bw - 4)}" height="${h}" fill="${color}"><title>${esc(r.started_at)} · ${Math.round(r.pass_rate * 100)}% passed</title></rect>`;
+  }).join('');
+  const pt = (i, r) => `${PAD + i * bw + bw / 2},${H - PAD - ((r.duration || 0) / maxDur) * (H - PAD * 2)}`;
+  const pts = trend.map((r, i) => pt(i, r)).join(' ');
+  const dots = trend.map((r, i) => { const [x, y] = pt(i, r).split(','); return `<circle cx="${x}" cy="${y}" r="2.5" fill="var(--blue)"><title>${esc(r.started_at)} · ${(r.duration || 0).toFixed(1)}с</title></circle>`; }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">${bars}<polyline points="${pts}" fill="none" stroke="var(--blue)" stroke-width="2"></polyline>${dots}</svg>`;
+}
+
+function renderReportCounts() {
+  $('#report-counts').innerHTML = ['passed', 'failed', 'broken', 'skipped'].map(k =>
+    `<div class="report-chip" style="border-color:${STATUS_COLORS[k]};color:${STATUS_COLORS[k]}">${STATUS_RU_ALLURE[k]}: ${REPORT.counts[k] || 0}</div>`
+  ).join('');
+}
+
+function renderReportFilters() {
+  const box = $('#report-filters'); box.innerHTML = '';
+  for (const k of ['passed', 'failed', 'broken', 'skipped', 'unknown']) {
+    const n = REPORT.counts[k] || 0;
+    if (!n && k === 'unknown') continue;
+    const on = REPORT_FILTER.has(k);
+    const b = document.createElement('button'); b.className = 'small' + (on ? ' on' : '');
+    b.style.borderColor = STATUS_COLORS[k];
+    if (on) { b.style.background = STATUS_COLORS[k]; b.style.color = '#0b0616'; }
+    b.textContent = `${STATUS_RU_ALLURE[k]} (${n})`;
+    b.addEventListener('click', () => { if (REPORT_FILTER.has(k)) REPORT_FILTER.delete(k); else REPORT_FILTER.add(k); renderReportFilters(); renderReportTable(); });
+    box.appendChild(b);
+  }
+}
+
+function renderStepsHtml(steps) {
+  if (!steps || !steps.length) return '';
+  return `<ul class="steps">${steps.map(s => `<li><span class="status-dot" style="background:${STATUS_COLORS[s.status] || 'var(--mute)'}"></span>${esc(s.name)}${renderStepsHtml(s.steps)}</li>`).join('')}</ul>`;
+}
+
+function attachmentHtml(runId, a) {
+  const url = `/api/tests/attachments/${encodeURIComponent(runId)}/${encodeURIComponent(a.source)}`;
+  if ((a.type || '').startsWith('image/')) return `<img class="screenshot" src="${url}" alt="${esc(a.name)}">`;
+  return `<div><a href="${url}" target="_blank" rel="noopener">📎 ${esc(a.name || a.source)}</a></div>`;
+}
+
+function toggleReportDetail(tr, t) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('report-detail')) { next.remove(); return; }
+  document.querySelectorAll('.report-detail').forEach(e => e.remove());
+  const d = document.createElement('tr'); d.className = 'report-detail';
+  d.innerHTML = `<td colspan="5">${renderStepsHtml(t.steps)}
+    ${t.message ? `<label>Сообщение</label><div class="log" style="color:var(--accent)">${esc(t.message)}</div>` : ''}
+    ${t.trace ? `<details open><summary>Трейсбек</summary><pre class="diff">${esc(t.trace)}</pre></details>` : ''}
+    ${t.attachments && t.attachments.length ? `<label>Вложения</label><div class="attachments">${t.attachments.map(a => attachmentHtml(REPORT.run_id, a)).join('')}</div>` : ''}
+    ${!t.steps.length && !t.message && !t.trace && !(t.attachments && t.attachments.length) ? '<div class="log">Подробностей нет.</div>' : ''}</td>`;
+  tr.after(d);
+}
+
+function renderReportTable() {
+  const tbody = $('#report-table-body'); tbody.innerHTML = '';
+  const q = REPORT_SEARCH.toLowerCase();
+  const rows = (REPORT.tests || []).filter(t => REPORT_FILTER.has(t.status) &&
+    (!q || (t.name + ' ' + t.suite + ' ' + t.file).toLowerCase().includes(q)));
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="log">Ничего не найдено.</td></tr>'; return; }
+  for (const t of rows) {
+    const row = document.createElement('tr'); row.className = 'report-row';
+    row.innerHTML = `<td>${esc(t.name)}</td><td>${esc(t.suite || '')}</td><td>${esc(t.file || '')}</td>
+      <td>${t.duration != null ? t.duration.toFixed(2) + 'с' : '—'}</td>
+      <td><span class="status-pill" style="background:${STATUS_COLORS[t.status] || 'var(--mute)'}">${STATUS_RU_ALLURE[t.status] || t.status}</span></td>`;
+    row.addEventListener('click', () => toggleReportDetail(row, t));
+    tbody.appendChild(row);
+  }
+}
+
+async function openReport(runId, repo) {
+  let report; try { report = await api(`/api/tests/report?repo=${encodeURIComponent(repo)}&run_id=${encodeURIComponent(runId)}`); }
+  catch (e) { alert(e.message); return; }
+  REPORT = report; REPORT_FILTER = new Set(['passed', 'failed', 'broken', 'skipped', 'unknown']); REPORT_SEARCH = '';
+  $('#report-search').value = '';
+  $('#report-title').textContent = 'Отчёт: ' + (report.target || 'весь набор');
+  $('#report-meta').innerHTML = `<span class="tag">${esc(repo.split('/').pop())}</span>
+    <span class="tag" style="border-color:${RUN_STATUS_COLOR[report.status] || 'var(--line)'};color:${RUN_STATUS_COLOR[report.status] || 'var(--mute)'}">${esc(RUN_STATUS_RU[report.status] || report.status)}</span>
+    ${report.duration ? `<span class="tag">${report.duration.toFixed(1)}с</span>` : ''}
+    ${report.source === 'fallback' ? `<span class="tag" style="color:var(--warn);border-color:var(--warn)">без Allure${report.allure_error ? ': ' + esc(report.allure_error) : ''}</span>` : ''}`;
+  $('#report-donut').innerHTML = donutSvg(report.counts);
+  renderReportCounts();
+  renderReportFilters();
+  renderReportTable();
+  $('#btn-open-allure').hidden = true;
+  $('#report-trend').innerHTML = '<div class="log">Загрузка тренда…</div>';
+  $('#dlg-report').showModal();
+  try {
+    const trend = await api(`/api/tests/trend?repo=${encodeURIComponent(repo)}&limit=20`);
+    $('#report-trend').innerHTML = trendSvg(trend);
+  } catch (e) { $('#report-trend').innerHTML = `<div class="log" style="color:var(--accent)">${esc(e.message)}</div>`; }
+  try {
+    const { available } = await api(`/api/tests/allure-available?repo=${encodeURIComponent(repo)}&run_id=${encodeURIComponent(runId)}`);
+    $('#btn-open-allure').hidden = !available;
+  } catch (e) {}
+}
+
+$('#report-search').addEventListener('input', (e) => { REPORT_SEARCH = e.target.value; if (REPORT) renderReportTable(); });
+$('#btn-open-allure').addEventListener('click', async () => {
+  if (!REPORT) return;
+  try { await api('/api/tests/allure-open', 'POST', { repo: REPORT.repo, run_id: REPORT.run_id }); }
+  catch (e) { alert(e.message); }
+});
 
 // ---- сценарии bike_fit (Playwright)
 function updateScenariosPanel() {

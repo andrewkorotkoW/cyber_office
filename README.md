@@ -100,6 +100,24 @@ REST: `GET /api/tests` (дерево тестов), `POST /api/tests/run` (за�
 `GET /api/tests/runs/{id}` (детали), `GET /api/tests/runs/{id}/events`. Вкладка живая:
 вывод и статус стримятся через ту же WebSocket-шину (`/ws`), что и события агентов.
 
+### Отчёт (Allure-style)
+
+Если в `.venv` целевого репозитория стоит `allure-pytest`, `testlab.run()` сам
+добавляет `--alluredir=workspace/tests/<repo>/allure-results/<run_id>` и помечает
+прогон `allure=true`; если пакета нет — прогон идёт как раньше, без флага, а отчёт
+собирается попроще из stdout (`app/core/allure.py`, поле `source: "allure"|"fallback"`
+в ответе). У каждого прогона в истории — кнопка «Отчёт»: плашки passed/failed/broken/
+skipped, кольцевая диаграмма и тренд по последним прогонам (обе — inline SVG, без
+библиотек), таблица тестов с поиском/фильтром по статусу и раскрытием шагов/трейсбека/
+вложений. REST: `GET /api/tests/report?repo=&run_id=`, `GET /api/tests/trend?repo=&limit=`,
+`GET /api/tests/attachments/{run_id}/{source}`.
+
+Кнопка «Открыть в Allure» на странице отчёта видна только если бэкенд нашёл сам Allure
+CLI (`AO_ALLURE_BIN` в `.env`, иначе — `allure` в `PATH`; сам Allure сюда не ставим).
+`GET /api/tests/allure-available?repo=&run_id=` решает, показывать ли кнопку;
+`POST /api/tests/allure-open` (`repo`, `run_id`) прогоняет `allure generate … --clean`
+по `allure-results` этого прогона и открывает получившийся `index.html` через `open`.
+
 ### Сценарии bike_fit
 
 Для репозитория bike_fit есть отдельная вкладка «Сценарии» (`app/core/scenarios.py`):

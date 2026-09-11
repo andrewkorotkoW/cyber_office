@@ -26,6 +26,8 @@ HOST = os.getenv("AO_HOST", "127.0.0.1")
 TG_TOKEN = os.getenv("AO_TG_TOKEN", "")
 TG_ADMINS = {int(x) for x in os.getenv("AO_TG_ADMINS", "").replace(";", ",").split(",") if x.strip().isdigit()}
 PORT = int(os.getenv("AO_PORT", "8600"))
+# Путь к бинарнику Allure CLI (не логируется). Пусто/не найден — просто нет кнопки "Открыть в Allure".
+ALLURE_BIN = os.getenv("AO_ALLURE_BIN", "")
 
 
 def ensure_dirs() -> None:

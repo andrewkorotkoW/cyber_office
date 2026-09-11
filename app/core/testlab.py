@@ -41,6 +41,27 @@ def _runs_file(repo: str) -> Path:
     return _run_dir(repo) / "runs.json"
 
 
+def allure_results_dir(repo: str, run_id: str) -> Path:
+    return _run_dir(repo) / "allure-results" / run_id
+
+
+def allure_report_dir(repo: str, run_id: str) -> Path:
+    return _run_dir(repo) / "allure-report" / run_id
+
+
+def _allure_pytest_installed(repo: str) -> bool:
+    """Смотрим в site-packages репозитория, а не запускаем его python: у сценариев в
+    тестах .venv/bin/python — поддельный shell-скрипт, который отвечает на любые
+    аргументы, так что `python -c "import allure"` там ничего не значит."""
+    venv = Path(repo) / ".venv"
+    if not venv.is_dir():
+        return False
+    for site in venv.glob("lib/python*/site-packages"):
+        if any(site.glob("allure_pytest*")):
+            return True
+    return False
+
+
 # ------------------------------------------------------------------ обнаружение
 async def discover(repo: str) -> dict:
     """Дерево тестов через `pytest --collect-only -q`: {"tests/test_x.py": ["test_foo", ...]}.
@@ -81,6 +102,8 @@ class TestRun:
     failed: list[str] = field(default_factory=list)
     returncode: int | None = None
     screenshot: str | None = None  # basename скриншота провала (сценарии bike_fit, см. app.core.scenarios)
+    allure: bool = False           # собраны ли allure-results для этого прогона (см. app.core.allure)
+    allure_error: str | None = None  # почему не собраны/чем отчёт будет беднее (не полная ошибка прогона)
 
 
 class RunStore:
@@ -143,9 +166,19 @@ async def run(repo: str, target: str | None, run_id: str, extra_args: list[str] 
     сюда --screenshot/--output, см. app.core.scenarios)."""
     store = RunStore(repo)
     python = _venv_python(repo)
-    args = [str(python), "-m", "pytest", "-q"] + (extra_args or []) + ([target] if target else [])
+    extra = list(extra_args or [])
+    allure_used = False
+    allure_note = None
+    if _allure_pytest_installed(repo):
+        adir = allure_results_dir(repo, run_id)
+        adir.mkdir(parents=True, exist_ok=True)
+        extra = [f"--alluredir={adir}"] + extra
+        allure_used = True
+    else:
+        allure_note = "allure-pytest не найден в .venv репозитория — отчёт будет собран без шагов и вложений"
+    args = [str(python), "-m", "pytest", "-q"] + extra + ([target] if target else [])
     command = " ".join(args)
-    tr = TestRun(id=run_id, repo=repo, target=target, command=command)
+    tr = TestRun(id=run_id, repo=repo, target=target, command=command, allure=allure_used, allure_error=allure_note)
 
     if not python.exists():
         tr.status = "error"

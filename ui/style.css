@@ -65,8 +65,30 @@ body[data-view="tests"] #tests-view { display:flex }
 img.screenshot { display:block; max-width:100%; border:2px solid var(--line); margin-top:6px }
 .run-row { background:var(--card); border:2px solid var(--line); border-left:6px solid var(--mute); padding:6px 10px; margin-bottom:6px; cursor:pointer; box-shadow:2px 2px 0 var(--line) }
 .run-row:hover { filter:brightness(1.1) }
-.run-row .t { font-weight:600; font-size:12.5px }
+.run-row .t { font-weight:600; font-size:12.5px; display:flex; justify-content:space-between; align-items:center; gap:8px }
 .run-row .m { color:var(--mute); font-size:11.5px; margin-top:2px }
+
+dialog.wide { width:min(1100px,96vw) }
+.report-top { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; margin:10px 0 14px }
+.report-donut svg { display:block }
+.report-counts { display:flex; flex-direction:column; gap:4px; min-width:150px; padding-top:8px }
+.report-chip { border:2px solid var(--line); padding:3px 9px; font-size:12px; display:inline-block }
+.report-trendbox { flex:1; min-width:220px }
+.report-trendbox svg { max-width:100%; display:block }
+.report-filters { display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap }
+#report-search { margin-bottom:10px }
+.report-table { width:100%; border-collapse:collapse; font-size:12.5px }
+.report-table th { text-align:left; color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.5px; padding:4px 6px; border-bottom:2px solid var(--line) }
+.report-table td { padding:5px 6px; border-bottom:1px dashed var(--line); vertical-align:top }
+.report-row { cursor:pointer }
+.report-row:hover { filter:brightness(1.15) }
+.report-detail td { background:var(--bg) }
+.status-pill { display:inline-block; padding:1px 8px; font-size:11px; color:#0b0616; text-transform:uppercase }
+.steps { margin:4px 0 8px 16px; padding:0; font-size:12px }
+.steps li { list-style:none; padding:2px 0 2px 0 }
+.steps .steps { margin-left:16px }
+.status-dot { display:inline-block; width:8px; height:8px; margin-right:6px; vertical-align:middle }
+.attachments { display:flex; flex-direction:column; gap:6px; margin-top:6px }
 .columns { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; height:100% }
 .col { background:var(--bg); border:2px solid var(--line); padding:8px; overflow:auto; min-height:0 }
 .col h3 { font-size:12px; color:var(--mute); margin:0 0 8px; text-transform:uppercase; letter-spacing:1px; display:flex; justify-content:space-between }
