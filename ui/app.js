@@ -206,6 +206,11 @@ function connect() {
       }
       if (ev.kind === 'run.state' && ev.data.state !== 'running' && TESTS_REPO) loadTestsRuns();
     }
+    else if (ev.kind === 'scenario.recorded') {
+      if (ev.data.error) alert('Запись сценария: ' + ev.data.error);
+      else termLine('state', 'офис', '🎬 сценарий записан: ' + ev.data.name);
+      if (isBikeFit(TESTS_REPO)) loadScenarios();
+    }
   };
   ws.onclose = () => setTimeout(connect, 1500);
 }
@@ -214,6 +219,7 @@ loadState().then(() => { connect(); initView(); });
 
 // ---- тесты
 let TESTS_REPO = (() => { try { return localStorage.getItem('ao_tests_repo') || ''; } catch (e) { return ''; } })();
+const isBikeFit = (repo) => !!repo && repo.split('/').pop() === 'bike_fit';
 let CURRENT_RUN = null;
 let CURRENT_RUN_TARGET = null;
 const RUN_STATUS_RU = { running: 'выполняется', passed: 'пройдено', failed: 'провалено', error: 'ошибка' };
@@ -225,7 +231,7 @@ function switchView(view) {
   document.querySelectorAll('#view-switch button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   if (view === 'tests') {
     if (!TESTS_REPO || !STATE.repos.includes(TESTS_REPO)) TESTS_REPO = STATE.repos[0] || '';
-    renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns();
+    renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns(); updateScenariosPanel();
   }
 }
 function initView() {
@@ -239,7 +245,7 @@ function renderTestsRepoTabs() {
   for (const r of STATE.repos) {
     const b = document.createElement('button'); b.textContent = r.split('/').pop();
     b.className = TESTS_REPO === r ? 'on' : '';
-    b.onclick = () => { TESTS_REPO = r; try { localStorage.setItem('ao_tests_repo', r); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns(); $('#tests-run-live').hidden = true; };
+    b.onclick = () => { TESTS_REPO = r; try { localStorage.setItem('ao_tests_repo', r); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns(); updateScenariosPanel(); $('#tests-run-live').hidden = true; };
     box.appendChild(b);
   }
 }
@@ -311,18 +317,63 @@ async function openRunDetail(run_id) {
   $('#run-body').innerHTML = `<span class="tag">${esc(r.repo.split('/').pop())}</span><span class="tag" style="border-color:${RUN_STATUS_COLOR[r.status] || 'var(--line)'};color:${RUN_STATUS_COLOR[r.status] || 'var(--mute)'}">${esc(RUN_STATUS_RU[r.status] || r.status)}</span><span class="tag">${esc(r.command)}</span>
     <label>Время</label><div class="log">${esc(r.started_at)}${r.finished_at ? ' → ' + esc(r.finished_at) : ''}${r.duration ? ' · ' + r.duration.toFixed(1) + 'с' : ''}</div>
     ${r.failed && r.failed.length ? `<label>Провалившиеся тесты</label><div class="log" style="color:var(--accent)">${esc(r.failed.join('\n'))}</div>` : ''}
+    ${r.screenshot ? `<label>Скриншот падения</label><img class="screenshot" src="/api/scenarios/screenshot/${encodeURIComponent(r.id)}/${encodeURIComponent(r.screenshot)}">` : ''}
     <details ${r.status === 'failed' || r.status === 'error' ? 'open' : ''}><summary>Трейсбек / вывод (stdout/stderr)</summary><pre class="diff">${esc(out) || '(пусто)'}</pre></details>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="primary" id="run-retry">↻ Повторить</button></div>`;
   $('#run-retry').addEventListener('click', async () => {
     $('#dlg-run').close();
-    if (r.repo !== TESTS_REPO) { TESTS_REPO = r.repo; try { localStorage.setItem('ao_tests_repo', r.repo); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); }
-    await runTests(r.target);
+    if (r.repo !== TESTS_REPO) { TESTS_REPO = r.repo; try { localStorage.setItem('ao_tests_repo', r.repo); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); updateScenariosPanel(); }
+    if (r.target && r.target.includes('/tests/bike_fit/scenarios/')) await runScenario(r.target.split('/').pop());
+    else await runTests(r.target);
   });
   $('#dlg-run').showModal();
 }
 
 $('#btn-tests-refresh').addEventListener('click', loadTestsTree);
 $('#btn-tests-run-all').addEventListener('click', () => runTests(null));
+
+// ---- сценарии bike_fit (Playwright)
+function updateScenariosPanel() {
+  const show = isBikeFit(TESTS_REPO);
+  $('#scenarios-panel').hidden = !show;
+  if (show) loadScenarios();
+}
+
+async function loadScenarios() {
+  const box = $('#scenarios-list');
+  if (!isBikeFit(TESTS_REPO)) return;
+  box.innerHTML = '<div class="log">Загрузка…</div>';
+  try { renderScenarios((await api('/api/scenarios?repo=' + encodeURIComponent(TESTS_REPO))).scenarios); }
+  catch (e) { box.innerHTML = `<div class="log" style="color:var(--accent)">${esc(e.message)}</div>`; }
+}
+
+function renderScenarios(names) {
+  const box = $('#scenarios-list'); box.innerHTML = '';
+  if (!names.length) { box.innerHTML = '<div class="log">Сценариев ещё нет — запиши первый.</div>'; return; }
+  for (const name of names) {
+    const row = document.createElement('div'); row.className = 'test-row';
+    row.innerHTML = `<button class="small" data-run="${esc(name)}">▶</button><span>${esc(name)}</span>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => runScenario(b.dataset.run)));
+}
+
+async function runScenario(name) {
+  if (!isBikeFit(TESTS_REPO)) return;
+  try {
+    const { run_id } = await api('/api/scenarios/run', 'POST', { repo: TESTS_REPO, name });
+    openLiveRun(run_id, name);
+  } catch (e) { alert(e.message); }
+}
+
+$('#btn-scenarios-refresh').addEventListener('click', loadScenarios);
+$('#btn-scenario-record').addEventListener('click', async () => {
+  if (!isBikeFit(TESTS_REPO)) return;
+  try {
+    await api('/api/scenarios/record', 'POST', { repo: TESTS_REPO });
+    alert('Идёт запись сценария — в отдельном окне открылся браузер. Кликай по bike_fit как обычный пользователь, затем закрой это окно, когда закончишь.');
+  } catch (e) { alert(e.message); }
+});
 
 
 // ---- темы

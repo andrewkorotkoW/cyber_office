@@ -58,6 +58,11 @@ body[data-view="tests"] #tests-view { display:flex }
 .test-row { display:flex; align-items:center; gap:8px; padding:2px 0; font-size:12.5px }
 .tests-run-live { margin-bottom:14px }
 .tests-run-live label { display:flex; justify-content:space-between; align-items:center }
+.scenarios-panel { border:2px solid var(--line); background:var(--card); padding:10px; margin-bottom:12px }
+.scenarios-panel .tests-toolbar { margin-bottom:8px; align-items:center }
+.scenarios-title { color:var(--mute); font-size:12px; text-transform:uppercase; letter-spacing:.5px; flex:1 }
+.scenarios-list { display:flex; flex-direction:column; gap:2px }
+img.screenshot { display:block; max-width:100%; border:2px solid var(--line); margin-top:6px }
 .run-row { background:var(--card); border:2px solid var(--line); border-left:6px solid var(--mute); padding:6px 10px; margin-bottom:6px; cursor:pointer; box-shadow:2px 2px 0 var(--line) }
 .run-row:hover { filter:brightness(1.1) }
 .run-row .t { font-weight:600; font-size:12.5px }

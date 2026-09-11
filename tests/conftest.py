@@ -13,8 +13,8 @@ def workspace(tmp_path, monkeypatch):
     import importlib
     from app import config
     importlib.reload(config)
-    from app.core import tasks, roster, memory, worktree
-    for m in (tasks, roster, memory, worktree):
+    from app.core import tasks, roster, memory, worktree, testlab, scenarios
+    for m in (tasks, roster, memory, worktree, testlab, scenarios):
         importlib.reload(m)
     config.ensure_dirs()
     repo = tmp_path / "repo"
