@@ -16,6 +16,9 @@
   <div class="themes" id="themes">
     <button data-theme="arcade">Аркада</button><button data-theme="gameboy">Game Boy</button><button data-theme="cyberpunk">Кибер</button>
   </div>
+  <div class="view-switch" id="view-switch">
+    <button data-view="office" class="on">🏢 Офис</button><button data-view="tests">🧪 Тесты</button>
+  </div>
   <button id="btn-repo" class="small">＋ репозиторий</button>
   <button id="btn-new">＋ Задача</button>
   <button id="btn-mission" class="primary">🎯 Миссия</button>
@@ -29,6 +32,23 @@
     <div class="col" data-col="review"><h3>На ревью <span id="n-review"></span></h3></div>
     <div class="col" data-col="done"><h3>Готово / отклонено <span id="n-done"></span></h3></div>
   </div></div></section>
+  <section id="tests-view" class="panel"><h2>Тесты <span id="tests-repo-tabs" class="tabs"></span></h2><div class="body">
+    <div class="tests-toolbar">
+      <button id="btn-tests-refresh" class="small">↻ Обновить дерево</button>
+      <button id="btn-tests-run-all" class="primary">▶ Запустить всё</button>
+    </div>
+    <div class="tests-layout">
+      <div class="tests-tree" id="tests-tree"></div>
+      <div class="tests-side">
+        <div class="tests-run-live" id="tests-run-live" hidden>
+          <label>Прогон <span id="tests-run-live-label"></span></label>
+          <div class="term" id="tests-run-log"></div>
+        </div>
+        <label>История прогонов</label>
+        <div id="tests-runs"></div>
+      </div>
+    </div>
+  </div></section>
 </main>
 
 <dialog id="dlg-new">
@@ -63,6 +83,11 @@
 <dialog id="dlg-task">
   <div class="head"><h3 id="t-title"></h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content" id="t-body"></div>
+</dialog>
+
+<dialog id="dlg-run">
+  <div class="head"><h3 id="run-title"></h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content" id="run-body"></div>
 </dialog>
 
 <script>
