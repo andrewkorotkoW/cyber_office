@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import worktree
+from app.core import testlab, worktree
 from app.core.events import bus
 from app.core.office import Office
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -237,6 +237,54 @@ async def delete_mission(mission_id: str) -> dict:
         office.store.delete(t.id)
     del office.store.missions[mission_id]; office.store.save()
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ тесты
+@app.get("/api/tests")
+async def tests_discover(repo: str) -> dict:
+    if repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {repo}")
+    return await testlab.discover(repo)
+
+
+class RunIn(BaseModel):
+    repo: str
+    target: str | None = None
+
+
+@app.post("/api/tests/run")
+async def tests_run(body: RunIn) -> dict:
+    if body.repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {body.repo}")
+    run_id = testlab.new_run_id()
+    asyncio.create_task(testlab.run(body.repo, body.target, run_id))
+    return {"run_id": run_id}
+
+
+@app.get("/api/tests/runs")
+async def tests_runs(repo: str) -> list[dict]:
+    if repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {repo}")
+    from dataclasses import asdict
+    return [
+        {k: v for k, v in asdict(r).items() if k not in ("stdout", "stderr", "command")}
+        for r in testlab.RunStore(repo).list()
+    ]
+
+
+@app.get("/api/tests/runs/{run_id}")
+async def tests_run_detail(run_id: str) -> dict:
+    from dataclasses import asdict
+    tr = testlab.find_run(run_id)
+    if not tr:
+        raise HTTPException(404, "нет такого прогона")
+    return asdict(tr)
+
+
+@app.get("/api/tests/runs/{run_id}/events")
+async def tests_run_events(run_id: str) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(e) for e in bus.history if e.task_id == run_id][-300:]
 
 
 # ------------------------------------------------------------------ живые события

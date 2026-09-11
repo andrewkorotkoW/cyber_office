@@ -11,6 +11,7 @@ workspace/worktrees/
 workspace/agents/
 workspace/tasks.json
 workspace/tasks.tmp
+workspace/tests/
 workspace/tg_prefs.json
 workspace/.server.lock
 workspace/server.pid
