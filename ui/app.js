@@ -29,7 +29,7 @@ async function loadState() {
   Floor.setAgents(STATE.agents.map(a => ({ ...a })));
   const m = $('#mode'); m.textContent = STATE.mode === 'fake' ? 'режим: имитация агентов' : 'режим: Claude Code';
   m.className = 'mode' + (STATE.mode === 'fake' ? ' fake' : '');
-  renderRepoTabs(); renderMissions(); renderBoard(); fillForm();
+  renderRepoTabs(); renderMissions(); renderBoard(); fillForm(); renderTestsRepoTabs();
 }
 
 function renderRepoTabs() {
@@ -134,9 +134,14 @@ async function openTask(id) {
 let OPEN_TASK = null;
 $('#dlg-task').addEventListener('close', () => { OPEN_TASK = null; });
 function termAppend(box, ev) {
-  if (ev.kind !== 'agent.tool' && ev.kind !== 'agent.text' && ev.kind !== 'agent.state') return;
-  const d = document.createElement('div'); d.className = 'line ' + ev.kind.split('.')[1].replace('state', 'state').replace('tool', 'tool');
-  const text = ev.kind === 'agent.tool' ? '⚙ ' + ev.data.summary : ev.kind === 'agent.text' ? ev.data.text : '■ ' + ev.data.state;
+  let cls, text;
+  if (ev.kind === 'agent.tool') { cls = 'tool'; text = '⚙ ' + ev.data.summary; }
+  else if (ev.kind === 'agent.text') { cls = 'text'; text = ev.data.text; }
+  else if (ev.kind === 'agent.state') { cls = 'state'; text = '■ ' + ev.data.state; }
+  else if (ev.kind === 'run.output') { cls = 'text'; text = ev.data.line; }
+  else if (ev.kind === 'run.state') { cls = 'state'; text = '■ ' + ev.data.state; }
+  else return;
+  const d = document.createElement('div'); d.className = 'line ' + cls;
   d.textContent = text; box.appendChild(d);
   while (box.children.length > 400) box.firstChild.remove();
 }
@@ -192,10 +197,132 @@ function connect() {
       if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400));
       loadState();
     }
+    else if (ev.kind.startsWith('run.')) {
+      if (ev.task_id === CURRENT_RUN) {
+        const box = $('#tests-run-log'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; }
+        if (ev.kind === 'run.state') {
+          const label = $('#tests-run-live-label'); if (label) label.textContent = (CURRENT_RUN_TARGET || 'весь набор') + ' · ' + (RUN_STATUS_RU[ev.data.state] || ev.data.state);
+        }
+      }
+      if (ev.kind === 'run.state' && ev.data.state !== 'running' && TESTS_REPO) loadTestsRuns();
+    }
   };
   ws.onclose = () => setTimeout(connect, 1500);
 }
-loadState().then(connect);
+loadState().then(() => { connect(); initView(); });
+
+
+// ---- тесты
+let TESTS_REPO = (() => { try { return localStorage.getItem('ao_tests_repo') || ''; } catch (e) { return ''; } })();
+let CURRENT_RUN = null;
+let CURRENT_RUN_TARGET = null;
+const RUN_STATUS_RU = { running: 'выполняется', passed: 'пройдено', failed: 'провалено', error: 'ошибка' };
+const RUN_STATUS_COLOR = { running: '#5b8def', passed: '#5acd96', failed: '#f05a46', error: '#f05a46' };
+
+function switchView(view) {
+  document.body.dataset.view = view;
+  try { localStorage.setItem('ao_view', view); } catch (e) {}
+  document.querySelectorAll('#view-switch button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  if (view === 'tests') {
+    if (!TESTS_REPO || !STATE.repos.includes(TESTS_REPO)) TESTS_REPO = STATE.repos[0] || '';
+    renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns();
+  }
+}
+function initView() {
+  let view = 'office'; try { view = localStorage.getItem('ao_view') || 'office'; } catch (e) {}
+  switchView(view);
+}
+document.querySelectorAll('#view-switch button').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+
+function renderTestsRepoTabs() {
+  const box = $('#tests-repo-tabs'); box.innerHTML = '';
+  for (const r of STATE.repos) {
+    const b = document.createElement('button'); b.textContent = r.split('/').pop();
+    b.className = TESTS_REPO === r ? 'on' : '';
+    b.onclick = () => { TESTS_REPO = r; try { localStorage.setItem('ao_tests_repo', r); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); loadTestsRuns(); $('#tests-run-live').hidden = true; };
+    box.appendChild(b);
+  }
+}
+
+async function loadTestsTree() {
+  const box = $('#tests-tree');
+  if (!TESTS_REPO) { box.innerHTML = '<div class="log">Нет ни одного репозитория.</div>'; return; }
+  box.innerHTML = '<div class="log">Загрузка…</div>';
+  try { renderTestsTree(await api('/api/tests?repo=' + encodeURIComponent(TESTS_REPO))); }
+  catch (e) { box.innerHTML = `<div class="log" style="color:var(--accent)">${esc(e.message)}</div>`; }
+}
+
+function renderTestsTree(tree) {
+  const box = $('#tests-tree'); box.innerHTML = '';
+  if (tree.error) { box.innerHTML = `<div class="log" style="color:var(--accent)">${esc(tree.error)}</div>`; return; }
+  const files = Object.keys(tree.tree || {}).sort();
+  if (!files.length) { box.innerHTML = '<div class="log">Тесты не найдены.</div>'; return; }
+  for (const file of files) {
+    const g = document.createElement('div'); g.className = 'test-file';
+    g.innerHTML = `<div class="test-file-head"><button class="small" data-run="${esc(file)}">▶ файл</button><span>${esc(file)}</span></div>`;
+    const list = document.createElement('div'); list.className = 'test-list';
+    for (const name of tree.tree[file]) {
+      const row = document.createElement('div'); row.className = 'test-row';
+      row.innerHTML = `<button class="small" data-run="${esc(file)}::${esc(name)}">▶</button><span>${esc(name)}</span>`;
+      list.appendChild(row);
+    }
+    g.appendChild(list); box.appendChild(g);
+  }
+  box.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => runTests(b.dataset.run)));
+}
+
+async function runTests(target) {
+  if (!TESTS_REPO) return;
+  try {
+    const { run_id } = await api('/api/tests/run', 'POST', { repo: TESTS_REPO, target: target || null });
+    openLiveRun(run_id, target || null);
+  } catch (e) { alert(e.message); }
+}
+
+function openLiveRun(run_id, target) {
+  CURRENT_RUN = run_id; CURRENT_RUN_TARGET = target;
+  $('#tests-run-live').hidden = false;
+  $('#tests-run-live-label').textContent = (target || 'весь набор') + ' · выполняется';
+  $('#tests-run-log').innerHTML = '';
+}
+
+async function loadTestsRuns() {
+  if (!TESTS_REPO) { $('#tests-runs').innerHTML = ''; return; }
+  try { renderTestsRuns(await api('/api/tests/runs?repo=' + encodeURIComponent(TESTS_REPO))); }
+  catch (e) { $('#tests-runs').innerHTML = `<div class="log" style="color:var(--accent)">${esc(e.message)}</div>`; }
+}
+
+function renderTestsRuns(runs) {
+  const box = $('#tests-runs'); box.innerHTML = '';
+  if (!runs.length) { box.innerHTML = '<div class="log">Прогонов ещё не было.</div>'; return; }
+  for (const r of runs) {
+    const d = document.createElement('div'); d.className = 'run-row'; d.style.borderLeftColor = RUN_STATUS_COLOR[r.status] || 'var(--mute)';
+    d.innerHTML = `<div class="t">${esc(r.target || 'весь набор')}</div>
+      <div class="m">${esc(r.started_at)} · ${RUN_STATUS_RU[r.status] || r.status}${r.duration ? ' · ' + r.duration.toFixed(1) + 'с' : ''}</div>`;
+    d.addEventListener('click', () => openRunDetail(r.id));
+    box.appendChild(d);
+  }
+}
+
+async function openRunDetail(run_id) {
+  let r; try { r = await api(`/api/tests/runs/${run_id}`); } catch (e) { alert(e.message); return; }
+  $('#run-title').textContent = r.target || 'весь набор';
+  const out = (r.stdout || '') + (r.stderr ? '\n' + r.stderr : '');
+  $('#run-body').innerHTML = `<span class="tag">${esc(r.repo.split('/').pop())}</span><span class="tag" style="border-color:${RUN_STATUS_COLOR[r.status] || 'var(--line)'};color:${RUN_STATUS_COLOR[r.status] || 'var(--mute)'}">${esc(RUN_STATUS_RU[r.status] || r.status)}</span><span class="tag">${esc(r.command)}</span>
+    <label>Время</label><div class="log">${esc(r.started_at)}${r.finished_at ? ' → ' + esc(r.finished_at) : ''}${r.duration ? ' · ' + r.duration.toFixed(1) + 'с' : ''}</div>
+    ${r.failed && r.failed.length ? `<label>Провалившиеся тесты</label><div class="log" style="color:var(--accent)">${esc(r.failed.join('\n'))}</div>` : ''}
+    <details ${r.status === 'failed' || r.status === 'error' ? 'open' : ''}><summary>Трейсбек / вывод (stdout/stderr)</summary><pre class="diff">${esc(out) || '(пусто)'}</pre></details>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="primary" id="run-retry">↻ Повторить</button></div>`;
+  $('#run-retry').addEventListener('click', async () => {
+    $('#dlg-run').close();
+    if (r.repo !== TESTS_REPO) { TESTS_REPO = r.repo; try { localStorage.setItem('ao_tests_repo', r.repo); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); }
+    await runTests(r.target);
+  });
+  $('#dlg-run').showModal();
+}
+
+$('#btn-tests-refresh').addEventListener('click', loadTestsTree);
+$('#btn-tests-run-all').addEventListener('click', () => runTests(null));
 
 
 // ---- темы
