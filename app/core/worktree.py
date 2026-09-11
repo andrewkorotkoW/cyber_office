@@ -30,13 +30,16 @@ async def create(repo: str, task_id: str) -> tuple[str, str]:
     """Возвращает (branch, worktree_path)."""
     branch = f"agent/{task_id}"
     path = WORKTREES_DIR / task_id
+    # снять старую регистрацию (после перезапуска сервера каталог мог остаться «missing but registered»)
+    await _git(repo, "worktree", "remove", "--force", str(path))
+    await _git(repo, "worktree", "prune")
     if path.exists():
         shutil.rmtree(path, ignore_errors=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    code, out = await _git(repo, "worktree", "add", "-b", branch, str(path))
+    code, out = await _git(repo, "worktree", "add", "-f", "-b", branch, str(path))
     if code != 0:
         # ветка уже есть (повторный запуск) — переиспользуем
-        code, out = await _git(repo, "worktree", "add", str(path), branch)
+        code, out = await _git(repo, "worktree", "add", "-f", str(path), branch)
         if code != 0:
             raise RuntimeError(f"git worktree add: {out}")
     await _link_env(Path(repo), path)

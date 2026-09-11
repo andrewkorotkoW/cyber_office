@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 
 import pytest
@@ -100,3 +101,14 @@ async def test_worktree_links_project_env(workspace):
     assert os.path.islink(f"{path}/.venv") and os.path.exists(f"{path}/.venv/bin/pytest")
     st = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True).stdout
     assert ".venv" not in st          # symlink под .gitignore, в diff не попадёт
+
+
+async def test_worktree_recreate_after_dir_lost(workspace):
+    """Каталог worktree исчез (перезапуск/уборка), а регистрация в git осталась — create должен пережить."""
+    import shutil
+    from app.core import worktree
+    repo = workspace["repo"]
+    _, path = await worktree.create(repo, "lost")
+    shutil.rmtree(path)                                   # «missing but already registered»
+    branch, path2 = await worktree.create(repo, "lost")
+    assert branch == "agent/lost" and os.path.isdir(path2)
