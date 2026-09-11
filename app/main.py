@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import scenarios, testlab, worktree
+from app.core import allure, scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -286,6 +286,56 @@ async def tests_run_detail(run_id: str) -> dict:
 async def tests_run_events(run_id: str) -> list[dict]:
     from dataclasses import asdict
     return [asdict(e) for e in bus.history if e.task_id == run_id][-300:]
+
+
+# ------------------------------------------------------------------ отчёт (Allure-style)
+@app.get("/api/tests/report")
+async def tests_report(repo: str, run_id: str) -> dict:
+    if repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {repo}")
+    try:
+        return allure.build_report(repo, run_id)
+    except LookupError:
+        raise HTTPException(404, "нет такого прогона")
+
+
+@app.get("/api/tests/trend")
+async def tests_trend(repo: str, limit: int = 20) -> list[dict]:
+    if repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {repo}")
+    return allure.build_trend(repo, limit)
+
+
+@app.get("/api/tests/attachments/{run_id}/{source}")
+async def tests_attachment(run_id: str, source: str) -> FileResponse:
+    tr = testlab.find_run(run_id)
+    if not tr:
+        raise HTTPException(404, "нет такого прогона")
+    path = allure.attachment_path(tr.repo, run_id, source)
+    if path is None:
+        raise HTTPException(404, "нет такого вложения")
+    return FileResponse(path)
+
+
+@app.get("/api/tests/allure-available")
+async def tests_allure_available(repo: str, run_id: str) -> dict:
+    return {"available": allure.can_open(repo, run_id)}
+
+
+class AllureOpenIn(BaseModel):
+    repo: str
+    run_id: str
+
+
+@app.post("/api/tests/allure-open")
+async def tests_allure_open(body: AllureOpenIn) -> dict:
+    if body.repo not in _repos():
+        raise HTTPException(400, f"неизвестный repo: {body.repo}")
+    try:
+        await allure.generate_and_open(body.repo, body.run_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ сценарии (bike_fit)

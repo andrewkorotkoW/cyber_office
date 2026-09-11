@@ -98,6 +98,26 @@
   <div class="content" id="run-body"></div>
 </dialog>
 
+<dialog id="dlg-report" class="wide">
+  <div class="head"><h3 id="report-title"></h3>
+    <button id="btn-open-allure" class="small primary" hidden>🔺 Открыть в Allure</button>
+    <button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content">
+    <div id="report-meta"></div>
+    <div class="report-top">
+      <div class="report-donut" id="report-donut"></div>
+      <div class="report-counts" id="report-counts"></div>
+      <div class="report-trendbox"><label>Тренд по последним прогонам</label><div id="report-trend"></div></div>
+    </div>
+    <div class="report-filters" id="report-filters"></div>
+    <input id="report-search" placeholder="Поиск по имени / suite / файлу…">
+    <table class="report-table">
+      <thead><tr><th>Тест</th><th>Suite</th><th>Файл</th><th>Длительность</th><th>Статус</th></tr></thead>
+      <tbody id="report-table-body"></tbody>
+    </table>
+  </div>
+</dialog>
+
 <script>
   // тема до отрисовки, чтобы не мигало
   try { document.documentElement.dataset.theme = localStorage.getItem('ao_theme') || 'arcade'; } catch (e) {}
