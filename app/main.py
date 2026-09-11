@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import testlab, worktree
+from app.core import scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -285,6 +285,54 @@ async def tests_run_detail(run_id: str) -> dict:
 async def tests_run_events(run_id: str) -> list[dict]:
     from dataclasses import asdict
     return [asdict(e) for e in bus.history if e.task_id == run_id][-300:]
+
+
+# ------------------------------------------------------------------ сценарии (bike_fit)
+def _bike_fit_repo(repo: str) -> str:
+    if repo not in _repos() or not scenarios.is_bike_fit(repo):
+        raise HTTPException(400, "сценарии доступны только для bike_fit")
+    return repo
+
+
+class ScenarioRepoIn(BaseModel):
+    repo: str
+
+
+@app.get("/api/scenarios")
+async def scenarios_list(repo: str) -> dict:
+    _bike_fit_repo(repo)
+    return {"scenarios": scenarios.list_scenarios()}
+
+
+@app.post("/api/scenarios/record")
+async def scenarios_record(body: ScenarioRepoIn) -> dict:
+    repo = _bike_fit_repo(body.repo)
+    asyncio.create_task(scenarios.start_recording(repo))
+    return {"ok": True, "status": "recording"}
+
+
+class ScenarioRunIn(BaseModel):
+    repo: str
+    name: str
+
+
+@app.post("/api/scenarios/run")
+async def scenarios_run(body: ScenarioRunIn) -> dict:
+    repo = _bike_fit_repo(body.repo)
+    path = scenarios.scenario_path(body.name)
+    if path is None:
+        raise HTTPException(404, "нет такого сценария")
+    run_id = testlab.new_run_id()
+    asyncio.create_task(scenarios.run_scenario(repo, str(path), run_id))
+    return {"run_id": run_id}
+
+
+@app.get("/api/scenarios/screenshot/{run_id}/{filename}")
+async def scenarios_screenshot(run_id: str, filename: str) -> FileResponse:
+    path = scenarios.screenshot_path(run_id, filename)
+    if path is None:
+        raise HTTPException(404, "нет такого скриншота")
+    return FileResponse(path)
 
 
 # ------------------------------------------------------------------ живые события

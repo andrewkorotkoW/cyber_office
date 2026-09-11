@@ -80,6 +80,7 @@ class TestRun:
     stderr: str = ""
     failed: list[str] = field(default_factory=list)
     returncode: int | None = None
+    screenshot: str | None = None  # basename скриншота провала (сценарии bike_fit, см. app.core.scenarios)
 
 
 class RunStore:
@@ -134,13 +135,15 @@ def new_run_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
-async def run(repo: str, target: str | None, run_id: str) -> None:
+async def run(repo: str, target: str | None, run_id: str, extra_args: list[str] | None = None) -> None:
     """Запускает pytest в repo (без git worktree — правки там не делаются) и стримит
     вывод через bus. run_id получен заранее через new_run_id(), поэтому вызывающий код
-    может отдать его клиенту сразу, а сам await-ить run() в фоновой asyncio.create_task."""
+    может отдать его клиенту сразу, а сам await-ить run() в фоновой asyncio.create_task.
+    extra_args — дополнительные флаги pytest перед target (сценарии bike_fit добавляют
+    сюда --screenshot/--output, см. app.core.scenarios)."""
     store = RunStore(repo)
     python = _venv_python(repo)
-    args = [str(python), "-m", "pytest", "-q"] + ([target] if target else [])
+    args = [str(python), "-m", "pytest", "-q"] + (extra_args or []) + ([target] if target else [])
     command = " ".join(args)
     tr = TestRun(id=run_id, repo=repo, target=target, command=command)
 
