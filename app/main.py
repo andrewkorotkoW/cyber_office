@@ -53,6 +53,7 @@ def acquire_lock() -> None:
         raise SystemExit(f"agent_office уже запущен на этом workspace ({config.WORKSPACE}). "
                          f"Открой http://{config.HOST}:{config.PORT} или останови тот процесс.")
     _lock_fh.write(str(os.getpid())); _lock_fh.flush()
+    (config.WORKSPACE / "server.pid").write_text(str(os.getpid()))   # его читает подсказка after_merge
 
 office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
                 FakePlanner() if FAKE else ClaudePlanner())
