@@ -1,0 +1,19 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.idea/
+.DS_Store
+# рантайм офиса: состояние, логи, worktree'ы агентов, память, локальные настройки
+workspace/logs/
+workspace/worktrees/
+workspace/agents/
+workspace/tasks.json
+workspace/tasks.tmp
+workspace/tg_prefs.json
+workspace/.server.lock
+workspace/server.pid
+# песочница — отдельный git-репозиторий
+sandbox/
+assets/icon.iconset/

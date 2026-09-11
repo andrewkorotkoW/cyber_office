@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru" data-theme="arcade">
+<head>
+<meta charset="utf-8">
+<title>agent_office</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header>
+  <h1>🐒 agent_office</h1>
+  <span id="mode" class="mode">…</span>
+  <span class="spacer"></span>
+  <div class="themes" id="themes">
+    <button data-theme="arcade">Аркада</button><button data-theme="gameboy">Game Boy</button><button data-theme="cyberpunk">Кибер</button>
+  </div>
+  <button id="btn-repo" class="small">＋ репозиторий</button>
+  <button id="btn-new">＋ Задача</button>
+  <button id="btn-mission" class="primary">🎯 Миссия</button>
+</header>
+<main>
+  <section id="floor" class="panel"><h2>Офис</h2><div class="body"><canvas id="floor-canvas"></canvas></div></section>
+  <section id="terminal" class="panel"><h2>Лента агентов</h2><div class="body" id="term"></div></section>
+  <section id="board" class="panel"><h2>Задачи</h2><div class="body"><div id="missions"></div><div class="columns">
+    <div class="col" data-col="todo"><h3>Очередь <span id="n-todo"></span></h3></div>
+    <div class="col" data-col="running"><h3>В работе <span id="n-running"></span></h3></div>
+    <div class="col" data-col="review"><h3>На ревью <span id="n-review"></span></h3></div>
+    <div class="col" data-col="done"><h3>Готово / отклонено <span id="n-done"></span></h3></div>
+  </div></div></section>
+</main>
+
+<dialog id="dlg-new">
+  <div class="head"><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content">
+    <div class="row">
+      <div><label>Агент</label><select id="f-agent"></select></div>
+      <div><label>Репозиторий</label><select id="f-repo"></select></div>
+    </div>
+    <label>Название</label><input id="f-title" placeholder="Коротко: что сделать">
+    <label>Описание для агента</label><textarea id="f-prompt" placeholder="Что именно, где, критерии готовности. Чем конкретнее — тем лучше результат."></textarea>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('dlg-new').close()">Отмена</button>
+      <button class="primary" id="f-submit">Отправить агенту</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-mission">
+  <div class="head"><h3>Новая миссия</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content">
+    <p style="color:var(--mute);margin:0 0 6px">Одна большая цель. Майкл изучит репозиторий, разобьёт на подзадачи и раздаст команде. Каждая подзадача — отдельное ревью.</p>
+    <label>Репозиторий</label><select id="m-repo"></select>
+    <label>Цель</label><textarea id="m-goal" placeholder="Например: добавить в calc степень и процент, покрыть тестами, обновить README"></textarea>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('dlg-mission').close()">Отмена</button>
+      <button class="primary" id="m-submit">Запустить планирование</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-task">
+  <div class="head"><h3 id="t-title"></h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content" id="t-body"></div>
+</dialog>
+
+<script>
+  // тема до отрисовки, чтобы не мигало
+  try { document.documentElement.dataset.theme = localStorage.getItem('ao_theme') || 'arcade'; } catch (e) {}
+</script>
+<script src="/ui/floor.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>
