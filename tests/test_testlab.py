@@ -195,6 +195,23 @@ def test_runstore_trims_history_to_max_runs(tl, workspace, monkeypatch):
     assert sorted(fresh.runs.keys()) == ["r3", "r4", "r5"]   # оставлены последние по started_at
 
 
+def test_runstore_load_tolerates_missing_newer_fields(tl, workspace):
+    """runs.json, записанный до появления новых полей TestRun (например, будущих
+    allure/allure_error), не должен ронять RunStore.load() — только поля без default
+    обязаны присутствовать в старой записи, у остальных должен быть default=..."""
+    repo = workspace["repo"]
+    old_record = {"id": "legacy", "repo": repo, "target": None, "command": "pytest -q",
+                  "status": "passed"}                     # ни started_at, ни finished_at,
+                                                            # ни screenshot и т.п. не записаны
+    path = tl._runs_file(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([old_record]), encoding="utf-8")
+
+    store = tl.RunStore(repo)                              # не должно бросить TypeError
+    tr = store.get("legacy")
+    assert tr is not None and tr.status == "passed" and tr.screenshot is None
+
+
 def test_find_run_across_repos(tl, workspace, tmp_path):
     import subprocess
     repo_a = workspace["repo"]
