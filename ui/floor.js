@@ -111,6 +111,36 @@
   const PLANT = ['..pp..', '.pqpp.', 'pqppqp', '.ppqp.', '..tt..', '.tttt.'];
   const BOARD = ['tttttttttttttttt', 'tyyyyyyyyyyyyyyt', 'tydyyydydyyydyyt', 'tyyyyyyyyyyyyyyt', 'tydydyyydyyydyyt', 'tyyyyyyyyyyyyyyt', 'tttttttttttttttt'];
 
+  // ---------------------------------------------------------------- офисные коты (постоянные, не через Floor API)
+  // цвета — инлайн через colors-объект sprite(), палитра P не трогается
+  const CAT_STAND = [
+    '..f.....f..',
+    '.fffffffff.',
+    '.fyffnffyf.',
+    '.fffffffff.',
+    '..ff...ff..',
+  ];
+  const CAT_WALK1 = [
+    '..f.....f..',
+    '.fffffffff.',
+    '.fyffnffyf.',
+    '.fffffffff.',
+    '.ff.....ff.',
+  ];
+  const CAT_WALK2 = [
+    '..f.....f..',
+    '.fffffffff.',
+    '.fyffnffyf.',
+    '.fffffffff.',
+    '...ff.ff...',
+  ];
+  const CAT_LIE = [
+    '..f..........',
+    '.fffffffff...',
+    '.ffkfffffff..',
+    '...ffffff....',
+  ];
+
   function sprite(rows, x, y, colors) {
     for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
       const c = rows[j][i]; if (c === '.') continue;
@@ -138,6 +168,70 @@
     if (kind === 'in') a.queue.push({ walk: { x: TRAY_IN.x + 18, y: TRAY_IN.y + 4 } }, { pick: 'env' }, { walk: a.home }, { drop: true });
     else if (kind === 'out') a.queue.push({ pick: 'env' }, { walk: { x: TRAY_OUT.x - 8, y: TRAY_OUT.y + 4 } }, { drop: true }, { walk: a.home });
     else if (kind === 'banana') a.banana = 600;
+  }
+
+  // площадь пола для прогулок котов — считается от LW/LH, не от текущих чисел
+  const catMinX = Math.round(LW * 0.03), catMaxX = LW - Math.round(LW * 0.03);
+  const catMinY = Math.round(LH * 0.32), catMaxY = LH - Math.round(LH * 0.05);
+  function catRandomPoint() { return { x: catMinX + Math.random() * (catMaxX - catMinX), y: catMinY + Math.random() * (catMaxY - catMinY) }; }
+  function makeCat(colors) {
+    const start = catRandomPoint();
+    return { x: start.x, y: start.y, target: catRandomPoint(), dir: 1, walking: false, lying: false, lieTimer: 0, meow: 0, phase: Math.random() * Math.PI * 2, colors };
+  }
+  const cats = [
+    makeCat({ f: '#e8823c', y: '#2f6b3a', n: '#d9536b', k: '#5a3a1f', w: '#fff3e0' }), // рыжий
+    makeCat({ f: '#9099a6', y: '#e2c94a', n: '#d9536b', k: '#454b55', w: '#eef1f4' }), // серый
+  ];
+
+  function stepCat(cat) {
+    if (cat.lying) {
+      cat.lieTimer--;
+      if (cat.lieTimer <= 0) { cat.lying = false; cat.target = catRandomPoint(); }
+    } else {
+      const dx = cat.target.x - cat.x, dy = cat.target.y - cat.y, dist = Math.hypot(dx, dy);
+      if (dist < 1) {
+        cat.x = cat.target.x; cat.y = cat.target.y; cat.walking = false;
+        if (Math.random() < 0.35) { cat.lying = true; cat.lieTimer = 180 + Math.random() * 240; }
+        else cat.target = catRandomPoint();
+      } else {
+        const v = 0.45; cat.x += dx / dist * v; cat.y += dy / dist * v; cat.walking = true; cat.dir = dx < 0 ? -1 : 1;
+      }
+    }
+    if (cat.meow > 0) cat.meow--;
+    else if (Math.random() < 0.0006) cat.meow = 70 + Math.random() * 50;
+  }
+
+  function drawCats(t) { for (const cat of cats) drawCat(cat, t); }
+  function drawCat(cat, t) {
+    let rows = CAT_STAND;
+    if (cat.lying) rows = CAT_LIE;
+    else if (cat.walking) rows = Math.floor(t / 130) % 2 ? CAT_WALK1 : CAT_WALK2;
+    const w = rows[0].length, h = rows.length;
+    const x = Math.round(cat.x) - Math.round(w / 2), y = Math.round(cat.y) - h;
+    // тень
+    o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + 1, y + h, Math.max(1, w - 2), 1);
+    // хвост — плавная синусоида по фазе t, без телепортации/рывков
+    if (!cat.lying) {
+      const wag = Math.sin(t / 260 + cat.phase) * 1.4;
+      const tailX = cat.dir === -1 ? x + w : x - 1;
+      const tailY = y + Math.round(h * 0.4 + wag);
+      o.fillStyle = cat.colors.f; o.fillRect(tailX, tailY, 1, 2);
+    }
+    if (cat.dir === -1) { o.save(); o.translate(x * 2 + w, 0); o.scale(-1, 1); sprite(rows, x, y, cat.colors); o.restore(); }
+    else sprite(rows, x, y, cat.colors);
+    if (cat.meow > 0) drawMeowBubble(cat, y);
+  }
+  function drawMeowBubble(cat, topY) {
+    const bw = 20, bh = 10;
+    const bx = Math.round(cat.x) - Math.round(bw / 2), by = topY - bh - 5;
+    o.fillStyle = '#1c2433'; o.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    o.fillStyle = '#ffffff'; o.fillRect(bx, by, bw, bh);
+    const tipX = Math.round(cat.x) + (cat.dir === -1 ? -2 : 2);
+    o.fillRect(tipX - 2, by + bh, 4, 1); o.fillRect(tipX - 1, by + bh + 1, 2, 1); o.fillRect(tipX, by + bh + 2, 1, 1);
+    o.save();
+    o.font = '6px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'middle';
+    o.fillStyle = '#1c2433'; o.fillText('мяу', bx + bw / 2, by + bh / 2 + 1);
+    o.restore();
   }
 
   function step(a) {
@@ -168,6 +262,8 @@
     sprite(TRAY, TRAY_IN.x, TRAY_IN.y); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y);
     o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + 1, TRAY_IN.y - 3, 14, 2);
     o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + 1, TRAY_OUT.y - 3, 14, 2);
+    // офисные коты — на полу, до столов/подписей
+    drawCats(t);
     // столы (сначала — что позади обезьяны: монитор), потом обезьяна, потом стол поверх ног
     for (const a of agents) {
       const on = a.state === 'working';
@@ -220,6 +316,7 @@
   function frame(t) {
     if (!W) resize();
     for (const a of agents) { step(a); if (a.banana > 0) a.banana--; }
+    for (const cat of cats) stepCat(cat);
     o.clearRect(0, 0, LW, LH);
     drawWorld(t);
     ctx.fillStyle = TH.floor2; ctx.fillRect(0, 0, W, H);
