@@ -8,7 +8,10 @@
   const off = document.createElement('canvas'); off.width = LW; off.height = LH;
   const o = off.getContext('2d');
   let W = 0, H = 0, scale = 1, ox = 0, oy = 0;
-  let TH = { floor1: '#1a2231', floor2: '#182030', wall: '#243049', wallLine: '#1d2740', win: '#5b7fb4', winLite: '#8fb3e6', desk: '#3a465c', deskTop: '#2c364a', text: '#e6edf3', mute: '#8a93a3', tray: '#f05a46', tray2: '#5acd96' };
+  let TH = { floor1: '#1a2231', floor2: '#182030', wall: '#243049', wallLine: '#1d2740', win: '#5b7fb4', winLite: '#8fb3e6', desk: '#3a465c', deskTop: '#2c364a', text: '#e6edf3', mute: '#8a93a3', tray: '#f05a46', tray2: '#5acd96', rug: '#2f3b52', rugEdge: '#44536d' };
+  // общий масштаб людей/мебели (сетчатые спрайты рисуются крупнее ~в 1.5 раза), S() — округлённое смещение под этот масштаб
+  const HS = 1.5;
+  const S = n => Math.round(n * HS);
 
   // ---------------------------------------------------------------- палитра и спрайты
   const P = { s: '#e8c39e', d: '#2a1d14', m: '#5a3a28', w: '#ffffff', y: '#f2c14e', b: '#4f8ef7', k: '#222b38',
@@ -73,6 +76,49 @@
   const DOC_ICON = ['wwwwww', 'wddddw', 'wwwwww', 'wdddw.', 'wwwwww', 'wwwggw'];
   const ARM_DOC = ['.www.', 'wdddw', '.www.', '..s..', '..s..', '..s..', '..f..'];
 
+  // ---------------------------------------------------------------- доп. мебель, наполняющая офис (цвета — из TH/P, не хардкод)
+  const CLOCK = [
+    rb(['.', 2], ['k', 5], ['.', 2]),
+    rb(['.', 1], ['k', 1], ['w', 5], ['k', 1], ['.', 1]),
+    rb(['k', 1], ['w', 7], ['k', 1]),
+    rb(['k', 1], ['w', 2], ['k', 1], ['w', 4], ['k', 1]),
+    rb(['k', 1], ['w', 7], ['k', 1]),
+    rb(['k', 1], ['w', 7], ['k', 1]),
+    rb(['.', 1], ['k', 1], ['w', 5], ['k', 1], ['.', 1]),
+    rb(['.', 2], ['k', 5], ['.', 2]),
+  ];
+  const COOLER = [
+    '..wwwwww..', '.wbbbbbbw.', '.wbbbbbbw.', '.wbbbbbbw.', '.wbbbbbbw.', '.wbbbbbbw.',
+    '.wwwwwwww.', '..tttttt..', '.tttttttt.', '.tbtttttt.', '.tttttttt.', '.tttttttt.',
+    '.tttttttt.', '.tttttttt.', 'tttttttttt', 'tttttttttt',
+  ];
+  const CABINET = [
+    rb(['t', 20]),
+    rb(['t', 1], ['T', 18], ['t', 1]),
+    rb(['t', 1], ['T', 1], ['r', 3], ['T', 1], ['g', 3], ['T', 1], ['b', 3], ['T', 1], ['y', 3], ['T', 2], ['t', 1]),
+    rb(['t', 1], ['T', 18], ['t', 1]),
+    rb(['t', 1], ['T', 1], ['y', 3], ['T', 1], ['b', 3], ['T', 1], ['g', 3], ['T', 1], ['r', 3], ['T', 2], ['t', 1]),
+    rb(['t', 1], ['T', 18], ['t', 1]),
+    rb(['t', 1], ['T', 18], ['t', 1]),
+    rb(['t', 20]),
+    rb(['.', 2], ['t', 4], ['.', 8], ['t', 4], ['.', 2]),
+  ];
+  const COFFEE_MACHINE = [
+    rb(['.', 2], ['k', 6], ['.', 2]),
+    rb(['.', 1], ['k', 8], ['.', 1]),
+    rb(['.', 1], ['k', 1], ['w', 6], ['k', 1], ['.', 1]),
+    rb(['.', 1], ['k', 1], ['r', 6], ['k', 1], ['.', 1]),
+    rb(['.', 1], ['k', 8], ['.', 1]),
+    rb(['.', 1], ['k', 2], ['.', 4], ['k', 2], ['.', 1]),
+    rb(['.', 2], ['T', 6], ['.', 2]),
+    rb(['t', 10]),
+    rb(['t', 1], ['T', 8], ['t', 1]),
+    rb(['t', 1], ['T', 8], ['t', 1]),
+    rb(['t', 10]),
+    rb(['.', 2], ['t', 2], ['.', 2], ['t', 2], ['.', 2]),
+  ];
+  const CAT_BED = scale2(['.ooooo.', 'ommmmmo', '.ooooo.']);
+
   // ---------------------------------------------------------------- офисные коты (постоянные, не через Floor API)
   // цвета — инлайн через colors-объект sprite(), палитра P не трогается
   const CAT_STAND = scale2([
@@ -103,18 +149,33 @@
     '...ffffff....',
   ]);
 
-  function sprite(rows, x, y, colors) {
-    for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
-      const c = rows[j][i]; if (c === '.') continue;
-      o.fillStyle = (colors && colors[c]) || (c === 't' ? TH.desk : c === 'T' ? TH.deskTop : P[c]) || '#f0f'; o.fillRect(x + i, y + j, 1, 1);
+  // s — необязательный масштаб (по умолчанию 1); при s=1 работает как раньше, при s>1 каждый пиксель растягивается
+  // на неравномерную (nearest-neighbor) сетку — так спрайт можно увеличить в 1.5 раза без блюра и без перерисовки арта
+  function sprite(rows, x, y, colors, s) {
+    s = s || 1;
+    for (let j = 0; j < rows.length; j++) {
+      const py = y + Math.round(j * s), ph = Math.round((j + 1) * s) - Math.round(j * s);
+      const row = rows[j];
+      for (let i = 0; i < row.length; i++) {
+        const c = row[i]; if (c === '.') continue;
+        const px = x + Math.round(i * s), pw = Math.round((i + 1) * s) - Math.round(i * s);
+        o.fillStyle = (colors && colors[c]) || (c === 't' ? TH.desk : c === 'T' ? TH.deskTop : P[c]) || '#f0f';
+        o.fillRect(px, py, pw, ph);
+      }
     }
+  }
+  function spriteSize(rows, s) { s = s || 1; return { w: Math.round(rows[0].length * s), h: Math.round(rows.length * s) }; }
+  // прямоугольник, который займёт пиксель (col,row) спрайта после масштабирования — нужен для деталей поверх спрайта (моргание)
+  function pixelBox(col, row, s) {
+    const x = Math.round(col * s), y = Math.round(row * s);
+    return { x, y, w: Math.round((col + 1) * s) - x, h: Math.round((row + 1) * s) - y };
   }
   const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255; return `rgb(${r * k | 0},${g * k | 0},${b * k | 0})`; };
 
   // ---------------------------------------------------------------- мир
   const TRAY_IN = { x: 28, y: 184 }, TRAY_OUT = { x: LW - 60, y: 184 };
   let agents = [];   // {name,title,color,state, x,y, home:{x,y}, queue:[], carry:null, frame, banana:0}
-  const deskX = (i, n) => Math.round(LW / 2 + (i - (n - 1) / 2) * Math.min(144, (LW - 160) / Math.max(1, n)));
+  const deskX = (i, n) => Math.round(LW / 2 + (i - (n - 1) / 2) * Math.min(170, (LW - 100) / Math.max(1, n)));
 
   function setAgents(list) {
     const n = list.length;
@@ -127,8 +188,8 @@
   function setState(name, state) { const a = agents.find(x => x.name === name); if (a) a.state = state; }
   function envelope(kind, name) {
     const a = agents.find(x => x.name === name); if (!a) return;
-    if (kind === 'in') a.queue.push({ walk: { x: TRAY_IN.x + 36, y: TRAY_IN.y + 8 } }, { pick: 'env' }, { walk: a.home }, { drop: true });
-    else if (kind === 'out') a.queue.push({ pick: 'env' }, { walk: { x: TRAY_OUT.x - 16, y: TRAY_OUT.y + 8 } }, { drop: true }, { walk: a.home });
+    if (kind === 'in') a.queue.push({ walk: { x: TRAY_IN.x + S(36), y: TRAY_IN.y + S(8) } }, { pick: 'env' }, { walk: a.home }, { drop: true });
+    else if (kind === 'out') a.queue.push({ pick: 'env' }, { walk: { x: TRAY_OUT.x - S(16), y: TRAY_OUT.y + S(8) } }, { drop: true }, { walk: a.home });
     else if (kind === 'banana') a.banana = 600;
   }
 
@@ -136,9 +197,12 @@
   const catMinX = Math.round(LW * 0.03), catMaxX = LW - Math.round(LW * 0.03);
   const catMinY = Math.round(LH * 0.32), catMaxY = LH - Math.round(LH * 0.05);
   function catRandomPoint() { return { x: catMinX + Math.random() * (catMaxX - catMinX), y: catMinY + Math.random() * (catMaxY - catMinY) }; }
+  // лежанка в углу — коты иногда выбирают её вместо случайной точки и охотнее ложатся, оказавшись там
+  const catBed = { x: catMinX + 22, y: catMaxY - 8 };
+  function catNextTarget() { return Math.random() < 0.22 ? catBed : catRandomPoint(); }
   function makeCat(colors) {
     const start = catRandomPoint();
-    return { x: start.x, y: start.y, target: catRandomPoint(), dir: 1, walking: false, lying: false, lieTimer: 0, meow: 0, phase: Math.random() * Math.PI * 2, colors };
+    return { x: start.x, y: start.y, target: catNextTarget(), dir: 1, walking: false, lying: false, lieTimer: 0, meow: 0, phase: Math.random() * Math.PI * 2, colors };
   }
   const cats = [
     makeCat({ f: '#e8823c', y: '#2f6b3a', n: '#d9536b', k: '#5a3a1f', w: '#fff3e0' }), // рыжий
@@ -148,13 +212,14 @@
   function stepCat(cat) {
     if (cat.lying) {
       cat.lieTimer--;
-      if (cat.lieTimer <= 0) { cat.lying = false; cat.target = catRandomPoint(); }
+      if (cat.lieTimer <= 0) { cat.lying = false; cat.target = catNextTarget(); }
     } else {
       const dx = cat.target.x - cat.x, dy = cat.target.y - cat.y, dist = Math.hypot(dx, dy);
       if (dist < 1) {
         cat.x = cat.target.x; cat.y = cat.target.y; cat.walking = false;
-        if (Math.random() < 0.35) { cat.lying = true; cat.lieTimer = 180 + Math.random() * 240; }
-        else cat.target = catRandomPoint();
+        const atBed = Math.abs(cat.x - catBed.x) < 3 && Math.abs(cat.y - catBed.y) < 3;
+        if (Math.random() < (atBed ? 0.8 : 0.3)) { cat.lying = true; cat.lieTimer = 180 + Math.random() * 240; }
+        else cat.target = catNextTarget();
       } else {
         const v = 0.9; cat.x += dx / dist * v; cat.y += dy / dist * v; cat.walking = true; cat.dir = dx < 0 ? -1 : 1;
       }
@@ -219,33 +284,43 @@
       o.fillStyle = TH.win; o.fillRect(x, 16, 44, 36); o.fillStyle = TH.winLite; o.fillRect(x + 4, 20, 16, 12); o.fillRect(x + 24, 20, 16, 12);
       o.fillStyle = TH.winLite; o.globalAlpha = 0.7; o.fillRect(x + 4, 36, 16, 12); o.fillRect(x + 24, 36, 16, 12); o.globalAlpha = 1;
     }
-    sprite(PLANT, LW - 28, 60); sprite(PLANT, 8, 60);
+    sprite(CLOCK, 159, 20, null, HS); // часы на стене между окнами
+    sprite(PLANT, LW - 28, 60, null, HS); sprite(PLANT, 8, 60, null, HS);
+    sprite(COOLER, 44, 84, null, HS);          // кулер с бутылкой
+    sprite(CABINET, 200, 84, null, HS);        // шкаф-стеллаж с папками
+    sprite(COFFEE_MACHINE, 420, 84, null, HS); // кофемашина на тумбе
+    // коврик у входа
+    o.fillStyle = TH.rugEdge; o.fillRect(228, 244, 56, 26);
+    o.fillStyle = TH.rug; o.fillRect(232, 248, 48, 18);
+    o.fillStyle = TH.rugEdge;
+    for (let sx = 236; sx < 276; sx += 10) o.fillRect(sx, 252, 4, 10);
+    sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5)); // лежанка котов в углу
     // лотки
-    sprite(TRAY, TRAY_IN.x, TRAY_IN.y); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y);
-    o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + 2, TRAY_IN.y - 6, 28, 4);
-    o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + 2, TRAY_OUT.y - 6, 28, 4);
+    sprite(TRAY, TRAY_IN.x, TRAY_IN.y, null, HS); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y, null, HS);
+    o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + S(2), TRAY_IN.y - S(6), S(28), S(4));
+    o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + S(2), TRAY_OUT.y - S(6), S(28), S(4));
     // офисные коты — на полу, до столов/подписей
     drawCats(t);
     // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног
     for (const a of agents) {
       const on = a.state === 'working';
-      sprite(CHAIR, a.home.x - 4, a.home.y - 6);
-      sprite(on ? MONITOR_ON : MONITOR_OFF, a.home.x - 10, a.home.y - 44);
-      if (on && Math.floor(t / 120) % 2) { o.fillStyle = '#9cc4ff'; o.fillRect(a.home.x - 6, a.home.y - 40, 6, 2); o.fillRect(a.home.x - 6, a.home.y - 36, 10, 2); }
-      if (a.state === 'planning') sprite(BOARD, a.home.x - 16, a.home.y - 72);
-      if (a.banana > 0) sprite(DOC_ICON, a.home.x + 16, a.home.y - 16);
+      sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), null, HS);
+      sprite(on ? MONITOR_ON : MONITOR_OFF, a.home.x - S(10), a.home.y - S(44), null, HS);
+      if (on && Math.floor(t / 120) % 2) { o.fillStyle = '#9cc4ff'; o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2)); o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2)); }
+      if (a.state === 'planning') sprite(BOARD, a.home.x - S(16), a.home.y - S(72), null, HS);
+      if (a.banana > 0) sprite(DOC_ICON, a.home.x + S(16), a.home.y - S(16), null, HS);
     }
     for (const a of agents) drawHuman(a, t);
-    for (const a of agents) sprite(DESK, a.home.x - 28, a.home.y - 8);
+    for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), null, HS);
     // подписи
     o.font = '600 14px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'top';
     for (const a of agents) {
-      o.fillStyle = TH.text; o.fillText(a.title.split('·')[0].trim(), a.home.x, a.home.y + 6);
-      o.fillStyle = TH.mute; o.font = '13px "Pixelify Sans", monospace'; o.fillText({ idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует' }[a.state] || a.state, a.home.x, a.home.y + 24); o.font = '600 14px "Pixelify Sans", monospace';
+      o.fillStyle = TH.text; o.fillText(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6));
+      o.fillStyle = TH.mute; o.font = '13px "Pixelify Sans", monospace'; o.fillText({ idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует' }[a.state] || a.state, a.home.x, a.home.y + S(24)); o.font = '600 14px "Pixelify Sans", monospace';
     }
     o.font = '600 14px "Pixelify Sans", monospace';
-    o.fillStyle = TH.tray; o.fillText('задачи', TRAY_IN.x + 16, TRAY_IN.y + 14);
-    o.fillStyle = TH.tray2; o.fillText('ревью', TRAY_OUT.x + 16, TRAY_OUT.y + 14);
+    o.fillStyle = TH.tray; o.fillText('задачи', TRAY_IN.x + S(16), TRAY_IN.y + S(14));
+    o.fillStyle = TH.tray2; o.fillText('ревью', TRAY_OUT.x + S(16), TRAY_OUT.y + S(14));
   }
 
   function drawHuman(a, t) {
@@ -256,14 +331,21 @@
     if (a.walking) pose = Math.floor(t / 140) % 2 ? 'walk1' : 'walk2';
     else if (a.state === 'working' && !a.queue.length) pose = Math.floor(t / 160) % 2 ? 'type1' : 'type2';
     const rows = humanRows(pose, style);
-    const x = Math.round(a.x) - 8, y = Math.round(a.y) - 34;
+    const { w, h } = spriteSize(rows, HS);
+    const x = Math.round(a.x) - Math.round(w / 2), y = Math.round(a.y) - h - S(8);
     // тень
-    o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + 3, y + 25, 10, 2);
-    if (a.dir === -1) { o.save(); o.translate(x * 2 + 15, 0); o.scale(-1, 1); sprite(rows, x, y, colors); o.restore(); }
-    else sprite(rows, x, y, colors);
-    if (a.carry === 'env') sprite(ENVELOPE, x + (a.dir === -1 ? -12 : 16), y + 14);
-    if (a.state === 'review' && !a.queue.length) sprite(ARM_DOC, x + (a.dir === -1 ? -6 : 15), y - 2, { f: a.color, s: P.s });
-    if (a.state === 'idle' && !a.walking && Math.floor(t / 2800) % 4 === 0 && (t % 2800) < 120) { o.fillStyle = P.s; o.fillRect(x + 6, y + 4, 1, 1); o.fillRect(x + 9, y + 4, 1, 1); } // моргание — закрываем глаза цветом кожи
+    o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + S(3), y + S(25), S(10), S(2));
+    if (a.dir === -1) { o.save(); o.translate(x * 2 + S(15), 0); o.scale(-1, 1); sprite(rows, x, y, colors, HS); o.restore(); }
+    else sprite(rows, x, y, colors, HS);
+    if (a.carry === 'env') sprite(ENVELOPE, x + (a.dir === -1 ? -S(12) : S(16)), y + S(14), null, HS);
+    if (a.state === 'review' && !a.queue.length) sprite(ARM_DOC, x + (a.dir === -1 ? -S(6) : S(15)), y - S(2), { f: a.color, s: P.s }, HS);
+    if (a.state === 'idle' && !a.walking && Math.floor(t / 2800) % 4 === 0 && (t % 2800) < 120) {
+      // моргание — закрываем глаза цветом кожи, позиция глаз считается через тот же масштаб, что и весь спрайт
+      o.fillStyle = P.s;
+      const eye1 = pixelBox(6, 4, HS), eye2 = pixelBox(9, 4, HS);
+      o.fillRect(x + eye1.x, y + eye1.y, eye1.w, eye1.h);
+      o.fillRect(x + eye2.x, y + eye2.y, eye2.w, eye2.h);
+    }
   }
 
   function resize() {
