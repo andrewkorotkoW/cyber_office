@@ -2,5 +2,9 @@
   {
     "path": "/Users/andreykorotkow/PycharmProjects/Velo_bot",
     "after_merge": "./scripts/restart.sh"
+  },
+  {
+    "path": "/Users/andreykorotkow/PycharmProjects/agent_office",
+    "after_merge": "./.venv/bin/python -m pytest -q && echo 'офис: перезапусти сервер, чтобы применить (kill $(cat workspace/server.pid); .venv/bin/python -m app.main)'"
   }
 ]

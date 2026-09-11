@@ -69,8 +69,11 @@ class ClaudeRunner:
         ]
         env = {**os.environ, "PATH": f"{Path(self.binary).parent}:{os.environ.get('PATH', '')}"}
         try:
+            # limit: одна строка stream-json может нести содержимое большого файла (Read на 100 КБ+);
+            # дефолтные 64 КБ StreamReader рвут поток ошибкой «chunk exceed the limit»
             proc = await asyncio.create_subprocess_exec(
-                *args, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                *args, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                limit=32 * 1024 * 1024)
         except FileNotFoundError:
             return RunResult(False, "", error=f"claude не найден: {self.binary}")
 

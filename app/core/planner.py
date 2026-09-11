@@ -111,7 +111,8 @@ class ClaudePlanner:
                 "--allowedTools", READ_ONLY_TOOLS]
         env = {**os.environ, "PATH": f"{Path(self.binary).parent}:{os.environ.get('PATH', '')}"}
         proc = await asyncio.create_subprocess_exec(*args, cwd=repo, env=env,
-                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                    limit=32 * 1024 * 1024)
         out, err = await proc.communicate()
         try:
             msg = json.loads(out.decode("utf-8", errors="replace"))
