@@ -148,6 +148,14 @@
     '.ffkfffffff..',
     '...ffffff....',
   ]);
+  // прыжковая поза — лапы поджаты под тело (компактный силуэт, без выступающих ножек)
+  const CAT_JUMP = scale2([
+    '..f.....f..',
+    '.fffffffff.',
+    '.fyffnffyf.',
+    '.fffffffff.',
+    '.ffffffff..',
+  ]);
 
   // s — необязательный масштаб (по умолчанию 1); при s=1 работает как раньше, при s>1 каждый пиксель растягивается
   // на неравномерную (nearest-neighbor) сетку — так спрайт можно увеличить в 1.5 раза без блюра и без перерисовки арта
@@ -202,24 +210,89 @@
   function catNextTarget() { return Math.random() < 0.22 ? catBed : catRandomPoint(); }
   function makeCat(colors) {
     const start = catRandomPoint();
-    return { x: start.x, y: start.y, target: catNextTarget(), dir: 1, walking: false, lying: false, lieTimer: 0, meow: 0, phase: Math.random() * Math.PI * 2, colors };
+    return {
+      x: start.x, y: start.y, target: catNextTarget(), dir: 1, walking: false, lying: false, lieTimer: 0, meow: 0,
+      phase: Math.random() * Math.PI * 2, colors,
+      // прыжок на стол: deskGoal — имя агента-владельца стола (не ссылка на объект — agents пересоздаётся
+      // при каждом setAgents, ссылка на старый объект «протухнет»), deskApproach/deskTop — точки на полу
+      // перед столом и на столешнице, посчитанные один раз в момент выбора стола
+      deskGoal: null, deskSide: 1, deskApproach: null, deskTop: null, deskPose: 'sit', deskTimer: 0, jump: null, onDesk: false,
+    };
   }
   const cats = [
     makeCat({ f: '#e8823c', y: '#2f6b3a', n: '#d9536b', k: '#5a3a1f', w: '#fff3e0' }), // рыжий
     makeCat({ f: '#9099a6', y: '#e2c94a', n: '#d9536b', k: '#454b55', w: '#eef1f4' }), // серый
   ];
 
+  // ---- «запрыгнуть на стол»: не чаще ~раза в 20–40 сек на кота (шанс проверяется, только пока кот
+  // свободно гуляет — попытка «влезает» в общий бюджет, а не добавляется поверх него), столы —
+  // эксклюзивно: имя стола резервируется в cat.deskGoal на всё время визита
+  const CAT_DESK_CHANCE = 0.00055;              // ~1/1820 тиков ⇒ в среднем раз в ~30с при 60fps
+  const CAT_DESK_X_OFFSET = 32;                 // от центра стола вбок — за пределами монитора (±15), у края столешницы (±42)
+  const CAT_DESK_APPROACH_Y_OFFSET = 10;         // точка на полу перед столом
+  const CAT_DESK_TOP_Y_OFFSET = -4;              // точка на столешнице (у переднего края)
+  const CAT_DESK_SIT_MIN = 150, CAT_DESK_SIT_RANGE = 180; // 2.5–5.5с на столе при 60fps
+  const CAT_JUMP_ARC = 10;                      // высота дуги прыжка сверх прямой линии
+  const CAT_JUMP_STEP_TICKS = 6;                // держим каждый кадр дуги ~0.1с при 60fps
+  const CAT_JUMP_UP_STEPS = 4;                  // 3–4 кадра подъёма по параболе
+  const CAT_JUMP_DOWN_STEPS = 3;                // кадры спрыгивания вниз
+
+  function pickFreeDesk() {
+    if (!agents.length) return null;
+    const free = agents.filter(x => !cats.some(c => c.deskGoal === x.name));
+    return free.length ? free[Math.floor(Math.random() * free.length)] : null;
+  }
+  function startCatDeskTrip(cat) {
+    const desk = pickFreeDesk(); if (!desk) return;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    cat.deskGoal = desk.name;
+    cat.deskSide = side;
+    cat.deskApproach = { x: desk.home.x + side * CAT_DESK_X_OFFSET, y: desk.home.y + CAT_DESK_APPROACH_Y_OFFSET };
+    cat.deskTop = { x: desk.home.x + side * CAT_DESK_X_OFFSET, y: desk.home.y + CAT_DESK_TOP_Y_OFFSET };
+    cat.target = cat.deskApproach;
+  }
+  function startCatJump(cat, phase) {
+    const up = phase === 'up';
+    cat.jump = { phase, from: { x: cat.x, y: cat.y }, to: up ? cat.deskTop : cat.deskApproach, step: 0, t: 0, steps: up ? CAT_JUMP_UP_STEPS : CAT_JUMP_DOWN_STEPS };
+    cat.walking = false;
+  }
+  // прыжок анимируется отдельными «застывающими» кадрами (как шаги ходьбы), а не покадровой физикой —
+  // каждый кадр сдвигает кота на очередную точку параболы; итог — короткая дуга без телепортации
+  function stepCatJump(cat) {
+    const j = cat.jump; j.t++;
+    const idx = Math.min(j.steps, Math.floor(j.t / CAT_JUMP_STEP_TICKS) + 1);
+    if (idx !== j.step) {
+      j.step = idx;
+      const p = idx / j.steps, arc = Math.sin(p * Math.PI) * CAT_JUMP_ARC;
+      cat.x = j.from.x + (j.to.x - j.from.x) * p;
+      cat.y = j.from.y + (j.to.y - j.from.y) * p - arc;
+    }
+    if (j.t >= j.steps * CAT_JUMP_STEP_TICKS) {
+      cat.x = j.to.x; cat.y = j.to.y; cat.jump = null;
+      if (j.phase === 'up') { cat.onDesk = true; cat.deskPose = Math.random() < 0.5 ? 'sit' : 'lie'; cat.deskTimer = CAT_DESK_SIT_MIN + Math.random() * CAT_DESK_SIT_RANGE; }
+      else { cat.onDesk = false; cat.deskGoal = null; cat.target = catNextTarget(); }
+    }
+  }
+
   function stepCat(cat) {
-    if (cat.lying) {
+    if (cat.jump) { stepCatJump(cat); return; }
+    if (cat.onDesk) {
+      cat.deskTimer--;
+      if (cat.deskTimer <= 0) startCatJump(cat, 'down');
+    } else if (cat.lying) {
       cat.lieTimer--;
       if (cat.lieTimer <= 0) { cat.lying = false; cat.target = catNextTarget(); }
     } else {
+      if (!cat.deskGoal && Math.random() < CAT_DESK_CHANCE) startCatDeskTrip(cat);
       const dx = cat.target.x - cat.x, dy = cat.target.y - cat.y, dist = Math.hypot(dx, dy);
       if (dist < 1) {
         cat.x = cat.target.x; cat.y = cat.target.y; cat.walking = false;
-        const atBed = Math.abs(cat.x - catBed.x) < 3 && Math.abs(cat.y - catBed.y) < 3;
-        if (Math.random() < (atBed ? 0.8 : 0.3)) { cat.lying = true; cat.lieTimer = 180 + Math.random() * 240; }
-        else cat.target = catNextTarget();
+        if (cat.deskGoal) { startCatJump(cat, 'up'); }
+        else {
+          const atBed = Math.abs(cat.x - catBed.x) < 3 && Math.abs(cat.y - catBed.y) < 3;
+          if (Math.random() < (atBed ? 0.8 : 0.3)) { cat.lying = true; cat.lieTimer = 180 + Math.random() * 240; }
+          else cat.target = catNextTarget();
+        }
       } else {
         const v = 0.9; cat.x += dx / dist * v; cat.y += dy / dist * v; cat.walking = true; cat.dir = dx < 0 ? -1 : 1;
       }
@@ -228,17 +301,19 @@
     else if (Math.random() < 0.0006) cat.meow = 70 + Math.random() * 50;
   }
 
-  function drawCats(t) { for (const cat of cats) drawCat(cat, t); }
+  function drawCats(t, filter) { for (const cat of cats) if (!filter || filter(cat)) drawCat(cat, t); }
   function drawCat(cat, t) {
     let rows = CAT_STAND;
-    if (cat.lying) rows = CAT_LIE;
+    if (cat.jump) rows = CAT_JUMP;
+    else if (cat.onDesk) rows = cat.deskPose === 'lie' ? CAT_LIE : CAT_STAND;
+    else if (cat.lying) rows = CAT_LIE;
     else if (cat.walking) rows = Math.floor(t / 130) % 2 ? CAT_WALK1 : CAT_WALK2;
     const w = rows[0].length, h = rows.length;
     const x = Math.round(cat.x) - Math.round(w / 2), y = Math.round(cat.y) - h;
-    // тень
-    o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + 1, y + h, Math.max(1, w - 2), 1);
-    // хвост — плавная синусоида по фазе t, без телепортации/рывков
-    if (!cat.lying) {
+    // тень — на полу или на столе; в прыжке не рисуем (кот в воздухе)
+    if (!cat.jump) { o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + 1, y + h, Math.max(1, w - 2), 1); }
+    // хвост — плавная синусоида по фазе t, без телепортации/рывков; поджат в прыжке
+    if (!cat.lying && !cat.jump) {
       const wag = Math.sin(t / 260 + cat.phase) * 2.8;
       const tailX = cat.dir === -1 ? x + w : x - 1;
       const tailY = y + Math.round(h * 0.4 + wag);
@@ -299,8 +374,8 @@
     sprite(TRAY, TRAY_IN.x, TRAY_IN.y, null, HS); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y, null, HS);
     o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + S(2), TRAY_IN.y - S(6), S(28), S(4));
     o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + S(2), TRAY_OUT.y - S(6), S(28), S(4));
-    // офисные коты — на полу, до столов/подписей
-    drawCats(t);
+    // офисные коты, гуляющие по полу — до столов/подписей; коты в прыжке или уже на столе рисуются позже, поверх стола и человека
+    drawCats(t, c => !c.jump && !c.onDesk);
     // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног
     for (const a of agents) {
       const on = a.state === 'working';
@@ -312,6 +387,8 @@
     }
     for (const a of agents) drawHuman(a, t);
     for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), null, HS);
+    // коты, запрыгнувшие на стол (или летящие туда/обратно) — поверх стола и человека
+    drawCats(t, c => c.jump || c.onDesk);
     // подписи
     o.font = '600 14px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'top';
     for (const a of agents) {
