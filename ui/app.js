@@ -34,7 +34,7 @@ async function loadState() {
 
 function renderRepoTabs() {
   const box = $('#repo-tabs'); box.innerHTML = '';
-  const mk = (label, val) => { const b = document.createElement('button'); b.textContent = label; b.className = REPO_FILTER === val ? 'on' : ''; b.onclick = () => { REPO_FILTER = val; try { localStorage.setItem('ao_repo', val); } catch (e) {} renderRepoTabs(); renderMissions(); renderBoard(); }; box.appendChild(b); };
+  const mk = (label, val) => { const b = document.createElement('button'); b.textContent = label; b.className = REPO_FILTER === val ? 'on' : ''; b.onclick = () => { REPO_FILTER = val; try { localStorage.setItem('ao_repo', val); } catch (e) {} renderRepoTabs(); renderMissions(); renderBoard(); fillForm(); }; box.appendChild(b); };
   mk('все', '');
   for (const r of STATE.repos) mk(r.split('/').pop(), r);
 }
