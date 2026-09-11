@@ -23,6 +23,8 @@ app/core/office.py    очередь по агентам (один агент �
 app/core/planner.py   миссия -> план подзадач (claude в режиме только чтение, строгий JSON)
 app/core/roster.py    состав офиса: workspace/roster.json (имя, роль, модель, стол)
 app/core/memory.py    workspace/agents/<имя>/MEMORY.md — дописывается после каждой задачи
+app/core/testlab.py   тесты чужого репо: discover()/run() через .venv репозитория, история в workspace/tests/<repo>/runs.json
+app/core/scenarios.py Playwright-сценарии bike_fit: запись codegen'ом, запуск поверх testlab.run, скриншот падения
 app/telegram.py       Telegram-мост: задачи из чата, карточки на ревью с кнопками
 app/main.py           FastAPI: REST + WebSocket событий; ui/ — пиксельный офис (floor.js), лента, канбан, ревью
 sandbox/              учебный git-репозиторий для экспериментов
@@ -84,3 +86,28 @@ Sans, сетка на фоне). Три темы переключаются в �
 `{"path": "…/Velo_bot", "after_merge": "./scripts/restart.sh"}`. После «Одобрить»
 команда выполняется в каталоге репозитория (например, перезапуск бота на новом
 коде), результат уходит в ленту и в Telegram.
+
+## Тесты
+
+Вкладка «Тесты» — прогон тестов стороннего репозитория (не agent_office). Реестр —
+`app/core/testlab.py`: обнаружение через `pytest --collect-only -q` и запуск через
+`pytest -q` в `.venv` целевого репозитория, без git worktree — правки там не делаются.
+История прогонов — `workspace/tests/<repo>/runs.json` (атомарная запись tmp+`.replace()`,
+как у `app.core.tasks`; хранятся последние 200 прогонов на репозиторий).
+
+REST: `GET /api/tests` (дерево тестов), `POST /api/tests/run` (запуск, сразу отдаёт
+`run_id`, сам прогон — фоновая задача), `GET /api/tests/runs` (список прогонов),
+`GET /api/tests/runs/{id}` (детали), `GET /api/tests/runs/{id}/events`. Вкладка живая:
+вывод и статус стримятся через ту же WebSocket-шину (`/ws`), что и события агентов.
+
+### Сценарии bike_fit
+
+Для репозитория bike_fit есть отдельная вкладка «Сценарии» (`app/core/scenarios.py`):
+Playwright-тест UI записывается через `playwright codegen` (кнопка «Записать» поднимает
+локальный Streamlit bike_fit и открывает браузер записи; результат — pytest-файл в
+`workspace/tests/bike_fit/scenarios`). Запуск сценария идёт через тот же `testlab.run` —
+общая лента и история прогонов, просто с добавленными флагами
+`--screenshot=only-on-failure --output=...`; при падении сохранённый скриншот отдаётся по
+`GET /api/scenarios/screenshot/{run_id}/{filename}`. REST: `GET /api/scenarios` (список
+файлов), `POST /api/scenarios/record`, `POST /api/scenarios/run`. Velo_bot тестируется
+только обычным pytest — Playwright/UI-сценариев там нет.
