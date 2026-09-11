@@ -78,3 +78,7 @@ pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff
 
 .term { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:8px 10px; max-height:32vh; overflow:auto; white-space:pre-wrap }
 .term .line { padding:1px 0; border-bottom:1px dashed var(--line) } .term .line.tool { color:var(--blue) } .term .line.state { color:var(--warn) }
+
+.tabs { float:right; display:flex; gap:4px }
+.tabs button { padding:2px 8px; font-size:11px; box-shadow:2px 2px 0 var(--line) }
+.tabs button.on { background:var(--accent); border-color:var(--accent); color:var(--bg) }

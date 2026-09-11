@@ -1,6 +1,7 @@
 /* Состояние приходит одним снимком (/api/state) и живыми событиями (/ws). */
 const $ = (s) => document.querySelector(s);
 let STATE = { agents: [], tasks: [], repos: [], missions: [] };
+let REPO_FILTER = (() => { try { return localStorage.getItem('ao_repo') || ''; } catch (e) { return ''; } })();   // '' = все
 const STATUS_COL = { todo: 'todo', running: 'running', review: 'review', done: 'done', failed: 'done', rejected: 'done' };
 const STATUS_RU = { todo: 'в очереди', running: 'в работе', review: 'на ревью', done: 'готово', failed: 'ошибка', rejected: 'отклонено' };
 const STATUS_COLOR = { todo: '#8a93a3', running: '#5b8def', review: '#f2c14e', done: '#5acd96', failed: '#f05a46', rejected: '#8a93a3' };
@@ -28,13 +29,22 @@ async function loadState() {
   Floor.setAgents(STATE.agents.map(a => ({ ...a })));
   const m = $('#mode'); m.textContent = STATE.mode === 'fake' ? 'режим: имитация агентов' : 'режим: Claude Code';
   m.className = 'mode' + (STATE.mode === 'fake' ? ' fake' : '');
-  renderMissions(); renderBoard(); fillForm();
+  renderRepoTabs(); renderMissions(); renderBoard(); fillForm();
 }
+
+function renderRepoTabs() {
+  const box = $('#repo-tabs'); box.innerHTML = '';
+  const mk = (label, val) => { const b = document.createElement('button'); b.textContent = label; b.className = REPO_FILTER === val ? 'on' : ''; b.onclick = () => { REPO_FILTER = val; try { localStorage.setItem('ao_repo', val); } catch (e) {} renderRepoTabs(); renderMissions(); renderBoard(); }; box.appendChild(b); };
+  mk('все', '');
+  for (const r of STATE.repos) mk(r.split('/').pop(), r);
+}
+const visibleTask = (t) => !REPO_FILTER || t.repo === REPO_FILTER;
+const visibleMission = (m) => !REPO_FILTER || m.repo === REPO_FILTER;
 
 const MISSION_RU = { planning: 'Майкл планирует…', active: 'в работе', done: 'выполнена', failed: 'ошибка' };
 function renderMissions() {
   const box = $('#missions'); box.innerHTML = '';
-  for (const m of [...STATE.missions].sort((a, b) => b.created_at.localeCompare(a.created_at))) {
+  for (const m of [...STATE.missions].filter(visibleMission).sort((a, b) => b.created_at.localeCompare(a.created_at))) {
     const ts = STATE.tasks.filter(t => t.mission_id === m.id); const done = ts.filter(t => t.status === 'done').length;
     const d = document.createElement('div'); d.className = 'mission ' + m.status;
     d.innerHTML = `<div class="g">🎯 ${esc(m.goal.slice(0, 90))}</div>
@@ -48,7 +58,7 @@ function renderMissions() {
 
 function renderBoard() {
   const cols = { todo: [], running: [], review: [], done: [] };
-  for (const t of STATE.tasks) cols[STATUS_COL[t.status]].push(t);
+  for (const t of STATE.tasks.filter(visibleTask)) cols[STATUS_COL[t.status]].push(t);
   for (const [k, list] of Object.entries(cols)) {
     const col = document.querySelector(`.col[data-col="${k}"]`);
     col.querySelectorAll('.card').forEach(e => e.remove());
@@ -135,6 +145,7 @@ function fillForm() {
   $('#f-agent').innerHTML = STATE.agents.map(a => `<option value="${a.name}">${esc(a.title)}</option>`).join('');
   const opts = STATE.repos.map(r => `<option value="${esc(r)}">${esc(r.replace(/^\/Users\/[^/]+/, '~'))}</option>`).join('');
   $('#f-repo').innerHTML = opts; $('#m-repo').innerHTML = opts;
+  if (REPO_FILTER) { $('#f-repo').value = REPO_FILTER; $('#m-repo').value = REPO_FILTER; }
 }
 
 $('#btn-new').addEventListener('click', () => $('#dlg-new').showModal());

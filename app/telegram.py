@@ -163,8 +163,13 @@ async def status(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
     tasks = sorted(_office.store.tasks.values(), key=lambda t: t.updated_at, reverse=True)
+    repo = _repo_for(message.from_user.id)
+    show_all = "all" in (message.text or "").lower() or not repo
+    if not show_all:
+        tasks = [t for t in tasks if t.repo == repo]
     agents = ", ".join(f"{_agent_title(a.name)}: {a.state}" for a in _office.roster.agents.values())
-    lines = [f"👥 {agents}", ""]
+    scope = "все репозитории" if show_all else f"репозиторий <b>{ESC(_repo_name(repo))}</b> (/status all — все)"
+    lines = [f"👥 {agents}", f"📁 {scope}", ""]
     for status_key in ("running", "review", "todo", "failed"):
         items = [t for t in tasks if t.status == status_key][:8]
         if items:
