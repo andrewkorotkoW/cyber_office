@@ -150,3 +150,29 @@ def test_cyberpunk_desk_positions_dont_overlap_each_other(probe_data, n):
         for i in range(1, len(xs)):
             gap = xs[i] - xs[i - 1]
             assert gap >= min_gap, f"n={n} столы в ряду y={y} стоят слишком близко: {xs}, gap={gap} < {min_gap}"
+
+
+# ---------------------------------------------------------------- рассадка мест: точка home и минимальная дистанция
+
+@pytest.mark.parametrize("n", range(1, 7))
+def test_cyberpunk_desk_home_point_never_inside_an_obstacle(probe_data, n):
+    """Сама точка home (не только bbox стола) не должна лежать внутри ни одного sceneObstacleRects() —
+    проверка через ту же isInsideObstacle(), что использует сам floor.js для отталкивания точек."""
+    flags = probe_data["cyberDesksPointInsideObstacle"][str(n)]
+    positions = probe_data["cyberDesks"][str(n)]
+    assert len(flags) == n
+    for pos, inside in zip(positions, flags):
+        assert inside is False, f"n={n} точка home стола {pos} попала внутрь препятствия"
+
+
+@pytest.mark.parametrize("n", range(2, 7))
+def test_cyberpunk_desk_positions_keep_minimum_distance_from_nearest_neighbor(probe_data, n):
+    """Каждое место должно быть на разумном расстоянии от ближайшего соседа (в том числе из другого
+    ряда, а не только от соседа по своему ряду — иначе два стола из разных рядов могли бы слипнуться).
+    Порог — половина ширины footprint стола (DESK_HALF_W): меньшая дистанция означает пересечение
+    или дублирование точек мест."""
+    dists = probe_data["cyberDesksNearestNeighborDist"][str(n)]
+    positions = probe_data["cyberDesks"][str(n)]
+    assert len(dists) == n
+    for pos, dist in zip(positions, dists):
+        assert dist >= DESK_HALF_W, f"n={n} место {pos} слишком близко к соседу: dist={dist} < {DESK_HALF_W}"

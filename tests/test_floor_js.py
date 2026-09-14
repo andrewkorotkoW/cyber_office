@@ -94,6 +94,113 @@ def test_char_heads_are_distinct_and_well_formed():
     assert len({out[n]["joined"] for n in ("michael", "dwight", "pam")}) == 3
 
 
+# Выбор позы по a.state живёт внутри drawHuman() (не экспортируется — использует canvas o.*, что
+# требует DOM) и не вынесен в отдельную чистую функцию state->pose. Из module.exports для тестов
+# доступен только humanRows(pose, head), где pose — уже вычисленная строка. Отображение state->pose
+# ниже списано 1:1 с drawHuman() (ui/floor.js, строки ~792-796):
+#   idle/planning -> 'stand' (дефолт, оба состояния явно не обрабатываются)
+#   working -> 'type1'/'type2' (чередуются по кадру t — здесь оба варианта)
+#   review -> 'lean', failed -> 'failed', done -> 'done'
+STATE_TO_POSES = {
+    "idle": ["stand"],
+    "working": ["type1", "type2"],
+    "review": ["lean"],
+    "planning": ["stand"],
+    "failed": ["failed"],
+    "done": ["done"],
+}
+
+
+def test_sitting_pose_is_non_empty_for_every_state():
+    """Для каждого состояния сидячая поза (через humanRows, единственную экспортированную функцию
+    построения кадра по позе) даёт непустой набор строк спрайта корректной ширины."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const head = F.CHAR_HEADS.michael;
+        const poses = {json.dumps(sorted({p for ps in STATE_TO_POSES.values() for p in ps}))};
+        const rows = {{}};
+        for (const pose of poses) rows[pose] = F.humanRows(pose, head);
+        console.log(JSON.stringify(rows));
+    """)
+    for state, poses in STATE_TO_POSES.items():
+        for pose in poses:
+            rows = out[pose]
+            assert rows, f"state={state} pose={pose}: humanRows() вернул пустой результат"
+            assert len(rows) == 26, f"state={state} pose={pose}: неожиданная высота спрайта {len(rows)}"
+
+
+def test_sitting_pose_differs_between_visually_distinct_states():
+    """Позы, которые должны визуально отличаться (working/review/failed/done, и type1 vs type2
+    внутри working), действительно дают разные кадры humanRows()."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const head = F.CHAR_HEADS.michael;
+        const poses = ['stand', 'type1', 'type2', 'lean', 'failed', 'done'];
+        const rows = {{}};
+        for (const pose of poses) rows[pose] = F.humanRows(pose, head).join('|');
+        console.log(JSON.stringify(rows));
+    """)
+    distinct_poses = ["stand", "type1", "type2", "lean", "failed", "done"]
+    values = [out[p] for p in distinct_poses]
+    assert len(set(values)) == len(distinct_poses), (
+        f"ожидались {len(distinct_poses)} различных кадров позы, а реально различных: {len(set(values))} "
+        f"(позы: {distinct_poses})"
+    )
+
+
+def test_idle_and_planning_share_the_same_sitting_pose_selection_branch():
+    """ДЕФЕКТ/ограничение (не исправляю — вне роли QA, файл не редактирую): drawHuman() не выделяет
+    отдельную позу для planning — оно попадает в тот же default-случай 'stand', что и idle:
+
+        let pose = 'stand';
+        if (a.state === 'working') pose = ...
+        else if (a.state === 'review') pose = 'lean';
+        else if (a.state === 'failed') pose = 'failed';
+        else if (a.state === 'done') pose = 'done';
+
+    'planning' нигде в этой цепочке не упоминается. Значит из требований задачи ("результат должен
+    быть непустым и разным для разных состояний" для всех 6 состояний, включая planning) это не
+    выполняется на уровне позы тела: idle и planning дают идентичный кадр humanRows('stand', ...).
+    Визуально planning всё же отличим от idle — но не позой, а отдельной доской (BOARD) и подсветкой,
+    рисуемыми в drawActors() поверх фигуры, а не через humanRows()/позу тела.
+
+    Тест читает исходник и явно фиксирует это ограничение как регрессионный якорь: если кто-то добавит
+    отдельную ветку для 'planning' (например `else if (a.state === 'planning') pose = '...'`), тест
+    упадёт и потребует осознанного апдейта — вместе с обновлением STATE_TO_POSES выше."""
+    src = FLOOR_JS.read_text(encoding="utf-8")
+    start = src.index("let pose = 'stand';")
+    end = src.index("const rows = humanRows(pose, head);")
+    pose_selector = src[start:end]
+    assert "planning" not in pose_selector, (
+        "в drawHuman() появилась отдельная ветка для state==='planning' — "
+        "обнови STATE_TO_POSES и тесты выше, дефект/ограничение больше не актуален"
+    )
+    for state in ("working", "review", "failed", "done"):
+        assert state in pose_selector, f"ожидалась ветка для state==='{state}' в выборе позы"
+
+
+def test_module_exports_no_public_walk_or_pathfinding_functions_for_people():
+    """Люди больше не ходят (ui/floor.js, комментарий у LEGS_BODY: 'ходьбы больше нет — люди всегда
+    сидят/стоят на своём месте'). Убеждаемся, что в module.exports не осталось публичных функций
+    ходьбы/pathfinding для людей (для котов такая логика есть, но она не экспортируется — и не должна)."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify(Object.keys(F)));
+    """)
+    exported = set(out)
+    banned_substrings = ("walk", "step", "path", "target", "stepcat", "movehuman", "humanwalk")
+    suspicious = [k for k in exported if any(b in k.lower() for b in banned_substrings)]
+    assert not suspicious, f"в module.exports остались подозрительные на ходьбу/pathfinding имена: {suspicious}"
+    # актуальный список экспортов на момент написания теста — фиксируем явно, чтобы любое новое
+    # публичное имя (в т.ч. функция ходьбы, добавленная по недосмотру) требовало осознанного апдейта теста
+    expected = {
+        "LW", "LH", "deskX", "computeDeskPositions", "isInsideObstacle", "pointOutsideObstacles",
+        "sceneObstacleRects", "CYBER_DESK_BANDS", "characterFor", "CHAR_PALETTE", "CHAR_HEADS",
+        "humanRows", "DESK_FOOT", "DESK_MIN_GAP",
+    }
+    assert exported == expected, f"module.exports изменился: {exported.symmetric_difference(expected)}"
+
+
 def test_named_agent_poses_match_generic_layout_size():
     """Ходьбы больше нет (люди всегда сидят/стоят на a.home) — но сидячие позы по состояниям
     (working: type1/type2, review: lean, failed, done) должны давать тот же размер спрайта, что
