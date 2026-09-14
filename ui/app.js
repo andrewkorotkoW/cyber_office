@@ -33,6 +33,7 @@ async function loadState() {
   Floor.setAgents(STATE.agents.map(a => ({ ...a })));
   const m = $('#mode'); m.textContent = STATE.mode === 'fake' ? 'режим: имитация агентов' : 'режим: Claude Code';
   m.className = 'mode' + (STATE.mode === 'fake' ? ' fake' : '');
+  updateModeBusy();
   renderRepoTabs(); renderMissions(); renderBoard(); fillForm(); renderTestsRepoTabs();
 }
 
@@ -195,7 +196,7 @@ function connect() {
     if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-term'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
     if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary, ev.agent);
     else if (ev.kind === 'agent.text') termLine('text', who, ev.data.text, ev.agent);
-    else if (ev.kind === 'agent.state') { Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state, ev.agent); }
+    else if (ev.kind === 'agent.state') { const ag = STATE.agents.find(a => a.name === ev.agent); if (ag) ag.state = ev.data.state; updateModeBusy(); Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state, ev.agent); }
     else if (ev.kind === 'mission.created' || ev.kind === 'mission.updated') { termLine('state', 'офис', `🎯 миссия ${MISSION_RU[ev.data.mission.status] || ev.data.mission.status}: ${ev.data.mission.goal.slice(0, 80)}`, 'michael'); loadState(); }
     else if (ev.kind === 'task.created') { Floor.envelope('in', ev.agent); termLine('state', 'ты', '✉ задача: ' + ev.data.task.title, ev.agent); loadState(); }
     else if (ev.kind === 'task.updated') {
@@ -542,3 +543,12 @@ applyTheme((() => { try { return localStorage.getItem('ao_theme'); } catch (e) {
   sel.value = saved; if (window.Floor) Floor.setBackground(saved || null);
   sel.addEventListener('change', () => { try { localStorage.setItem('ao_bg', sel.value); } catch (e) {} Floor.setBackground(sel.value || null); });
 })();
+
+// Кнопка режима светится, пока хоть один сотрудник работает или планирует.
+function updateModeBusy() {
+  const m = document.getElementById('mode'); if (!m) return;
+  const busy = (STATE.agents || []).some(a => a.state && a.state !== 'idle');
+  m.classList.toggle('busy', busy);
+  const n = (STATE.agents || []).filter(a => a.state && a.state !== 'idle').length;
+  m.title = busy ? `работают: ${n}` : 'все свободны';
+}
