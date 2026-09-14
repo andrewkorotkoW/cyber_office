@@ -25,6 +25,8 @@ const MAX_AUTO_RETRIES = 3;
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } };
 const costLabel = (usd) => usd ? ` · ≈$${usd.toFixed(2)} по API` : '';
 const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n }).title.split('·')[0].trim();
+// круглый аватар-портрет агента (лента событий, карточки задач, шапка миссии) — пусто, если у агента нет avatar
+const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name === n); return a && a.avatar ? `<img class="avatar" width="${size}" height="${size}" src="/ui/assets/portraits/${esc(a.avatar)}" alt="">` : ''; };
 
 async function loadState() {
   STATE = await api('/api/state');
@@ -49,7 +51,7 @@ function renderMissions() {
   for (const m of [...STATE.missions].filter(visibleMission).sort((a, b) => b.created_at.localeCompare(a.created_at))) {
     const ts = STATE.tasks.filter(t => t.mission_id === m.id); const done = ts.filter(t => t.status === 'done').length;
     const d = document.createElement('div'); d.className = 'mission ' + m.status;
-    d.innerHTML = `<div class="g">🎯 ${esc(m.goal.slice(0, 90))}</div>
+    d.innerHTML = `<div class="g">${avatarImg('michael', 24)}🎯 ${esc(m.goal.slice(0, 90))}</div>
       <div class="s">${MISSION_RU[m.status] || m.status}${m.summary ? ' · ' + esc(m.summary) : ''}${m.error ? ' · ' + esc(m.error) : ''} · ${done}/${ts.length}${m.cost_usd ? ' · $' + m.cost_usd.toFixed(2) : ''}
         <button class="small" style="float:right" data-del="${m.id}">✕</button></div>
       <div class="bar"><i style="width:${ts.length ? Math.round(done / ts.length * 100) : 0}%"></i></div>`;
@@ -71,7 +73,7 @@ function renderBoard() {
       const waiting = t.status === 'todo' && t.depends_on.some(d => (STATE.tasks.find(x => x.id === d) || {}).status !== 'done');
       const depNames = t.depends_on.map(d => (STATE.tasks.find(x => x.id === d) || { title: d }).title);
       c.innerHTML = `<div class="t">${t.mission_id ? '🎯 ' : ''}${esc(t.title)}</div>
-        <div class="m">${esc(agentTitle(t.agent))} · ${STATUS_RU[t.status]} · ${esc(t.repo.split('/').pop())}${costLabel(t.cost_usd)}</div>
+        <div class="m">${avatarImg(t.agent, 16)}${esc(agentTitle(t.agent))} · ${STATUS_RU[t.status]} · ${esc(t.repo.split('/').pop())}${costLabel(t.cost_usd)}</div>
         ${waiting ? `<div class="dep">⏳ ждёт: ${esc(depNames.join(', '))}</div>` : ''}
         ${t.status === 'review' && t.overlap_files && t.overlap_files.length ? `<div class="dep">⚠️ отстала от main на ${t.behind_main}, пересекается: ${esc(t.overlap_files.slice(0, 3).join(', '))}</div>` : (t.status === 'review' && t.behind_main ? `<div class="m">↻ main ушёл вперёд на ${t.behind_main}, файлы не пересекаются</div>` : '')}
         ${t.result && t.status !== 'todo' ? `<div class="res">💬 ${esc(summary(t.result))}</div>` : ''}
@@ -180,9 +182,9 @@ $('#btn-repo').addEventListener('click', async () => {
 
 // ---- лента + события
 const term = $('#term');
-function termLine(cls, who, text) {
+function termLine(cls, who, text, agent) {
   const d = document.createElement('div'); d.className = 'line ' + cls;
-  d.innerHTML = `<span class="who">${esc(who)}</span>${esc(text)}`;
+  d.innerHTML = `${agent ? avatarImg(agent, 18) : ''}<span class="who">${esc(who)}</span>${esc(text)}`;
   term.appendChild(d); while (term.children.length > 300) term.firstChild.remove();
   term.scrollTop = term.scrollHeight;
 }
@@ -191,16 +193,16 @@ function connect() {
   ws.onmessage = (m) => {
     const ev = JSON.parse(m.data); const who = ev.agent ? agentTitle(ev.agent) : 'офис';
     if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-term'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
-    if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary);
-    else if (ev.kind === 'agent.text') termLine('text', who, ev.data.text);
-    else if (ev.kind === 'agent.state') { Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state); }
-    else if (ev.kind === 'mission.created' || ev.kind === 'mission.updated') { termLine('state', 'офис', `🎯 миссия ${MISSION_RU[ev.data.mission.status] || ev.data.mission.status}: ${ev.data.mission.goal.slice(0, 80)}`); loadState(); }
-    else if (ev.kind === 'task.created') { Floor.envelope('in', ev.agent); termLine('state', 'ты', '✉ задача: ' + ev.data.task.title); loadState(); }
+    if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary, ev.agent);
+    else if (ev.kind === 'agent.text') termLine('text', who, ev.data.text, ev.agent);
+    else if (ev.kind === 'agent.state') { Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state, ev.agent); }
+    else if (ev.kind === 'mission.created' || ev.kind === 'mission.updated') { termLine('state', 'офис', `🎯 миссия ${MISSION_RU[ev.data.mission.status] || ev.data.mission.status}: ${ev.data.mission.goal.slice(0, 80)}`, 'michael'); loadState(); }
+    else if (ev.kind === 'task.created') { Floor.envelope('in', ev.agent); termLine('state', 'ты', '✉ задача: ' + ev.data.task.title, ev.agent); loadState(); }
     else if (ev.kind === 'task.updated') {
       const t = ev.data.task; if (t.status === 'review') { Floor.envelope('out', ev.agent); Floor.setState(ev.agent, 'review'); setTimeout(() => Floor.setState(ev.agent, 'idle'), 4000); }
       if (t.status === 'done') Floor.envelope('banana', ev.agent);   // одобрили — банан на стол
-      termLine('state', who, `→ ${STATUS_RU[t.status]}: ${t.title}`);
-      if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400));
+      termLine('state', who, `→ ${STATUS_RU[t.status]}: ${t.title}`, ev.agent);
+      if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400), ev.agent);
       loadState();
     }
     else if (ev.kind.startsWith('run.')) {

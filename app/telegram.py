@@ -40,6 +40,8 @@ _PREFS = config.WORKSPACE / "tg_prefs.json"
 _current_repo: dict[int, str] = {}          # tg_id -> выбранный репозиторий (хранится в tg_prefs.json)
 _pending_reason: dict[int, str] = {}       # tg_id -> task_id, ждём текст причины отклонения
 _pending_task: dict[int, tuple[str, str]] = {}   # tg_id -> (agent, text): задача ждёт выбора репозитория
+_portrait_sent: set[str] = set()           # id задач, для которых уже отправляли фото-портрет агента
+PORTRAITS_DIR = config.ROOT / "ui" / "assets" / "portraits"
 
 
 def _load_prefs() -> None:
@@ -304,6 +306,26 @@ async def _notify_admins(text: str, **kw) -> None:
             log.exception("tg notify failed")
 
 
+async def _maybe_send_portrait(t) -> None:
+    """При первом уведомлении по задаче — фото-портрет агента (по желанию, не мешает обычной карточке)."""
+    if t.id in _portrait_sent:
+        return
+    _portrait_sent.add(t.id)
+    agent = _office.roster.get(t.agent)
+    if not agent or not agent.avatar:
+        return
+    path = PORTRAITS_DIR / agent.avatar
+    if not path.exists():
+        return
+    caption = f"{_agent_title(t.agent)} · {ESC(t.title)[:180]}"
+    photo = path.read_bytes()
+    for uid in config.TG_ADMINS:
+        try:
+            await _bot.send_photo(uid, BufferedInputFile(photo, filename=agent.avatar), caption=caption, parse_mode="HTML")
+        except Exception:
+            log.exception("tg portrait send failed")
+
+
 async def _on_event(ev: Event) -> None:
     if _bot is None or not config.TG_ADMINS:
         return
@@ -313,6 +335,7 @@ async def _on_event(ev: Event) -> None:
             return
         if t.status == "failed" and t.auto_retry_at:
             return    # автоповтор уже запланирован — про него уведомляем отдельно (task.infra_failure)
+        await _maybe_send_portrait(t)
         await _notify_admins(_task_card(t), reply_markup=_task_kb(t))
     elif ev.kind == "task.infra_failure":
         t = ev.data.get("task", {})
