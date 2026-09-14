@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>cyber_office</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Orbitron:wght@700;900&family=Monoton&family=Tilt+Neon&family=Chakra+Petch:ital,wght@1,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/ui/style.css">
@@ -14,27 +14,37 @@
   <img src="ui/assets/team.png" alt="команда" class="team-strip" title="Команда">
   <span id="mode" class="mode">…</span>
   <span class="spacer"></span>
-  <select id="bg" class="small" title="Фон этажа (прототип)">
-    <option value="">фон: рисованный</option>
-    <option value="ui/assets/bg_office_window.png">фон: кабинет с окном</option>
-    <option value="ui/assets/bg_server_room.png">фон: серверная</option>
-    <option value="ui/assets/bg_skyline_office.png">фон: офис с небоскрёбами</option>
-  </select>
-  <div class="themes" id="themes">
-    <button data-theme="arcade">Аркада</button><button data-theme="gameboy">Game Boy</button><button data-theme="cyberpunk">Кибер</button>
+  <button id="btn-menu" class="small burger" aria-label="Меню" aria-expanded="false">☰</button>
+  <div class="header-menu" id="header-menu">
+    <select id="bg" class="small" title="Фон этажа (прототип)">
+      <option value="">фон: рисованный</option>
+      <option value="ui/assets/bg_office_window.png">фон: кабинет с окном</option>
+      <option value="ui/assets/bg_server_room.png">фон: серверная</option>
+      <option value="ui/assets/bg_skyline_office.png">фон: офис с небоскрёбами</option>
+    </select>
+    <div class="themes" id="themes">
+      <button data-theme="arcade">Аркада</button><button data-theme="gameboy">Game Boy</button><button data-theme="cyberpunk">Кибер</button>
+    </div>
+    <div class="view-switch" id="view-switch">
+      <button data-view="office" class="on">🏢 Офис</button><button data-view="tests">🧪 Тесты</button>
+    </div>
+    <button id="btn-repo" class="small">＋ репозиторий</button>
+    <button id="btn-new">＋ Задача</button>
+    <button id="btn-mission" class="primary">🎯 Миссия</button>
   </div>
-  <div class="view-switch" id="view-switch">
-    <button data-view="office" class="on">🏢 Офис</button><button data-view="tests">🧪 Тесты</button>
-  </div>
-  <button id="btn-repo" class="small">＋ репозиторий</button>
-  <button id="btn-new">＋ Задача</button>
-  <button id="btn-mission" class="primary">🎯 Миссия</button>
 </header>
 <main>
-  <section id="floor" class="panel"><h2>Офис</h2><div class="body"><canvas id="floor-canvas"></canvas></div></section>
+  <section id="floor" class="panel"><h2>Офис <button id="btn-floor-toggle" class="small floor-toggle">▼ показать офис</button></h2><div class="body"><canvas id="floor-canvas"></canvas></div></section>
   <section id="terminal" class="panel"><h2>Лента агентов</h2><div class="body" id="term"></div></section>
-  <section id="board" class="panel"><h2>Задачи <span id="repo-tabs" class="tabs"></span></h2><div class="body"><div id="missions"></div><div class="columns">
-    <div class="col" data-col="todo"><h3>Очередь <span id="n-todo"></span></h3></div>
+  <section id="board" class="panel"><h2>Задачи <span id="repo-tabs" class="tabs"></span></h2><div class="body"><div id="missions"></div>
+    <div class="board-tabs" id="board-tabs">
+      <button class="board-tab on" data-col="todo">Очередь <span id="tab-n-todo"></span></button>
+      <button class="board-tab" data-col="running">В работе <span id="tab-n-running"></span></button>
+      <button class="board-tab" data-col="review">На ревью <span id="tab-n-review"></span></button>
+      <button class="board-tab" data-col="done">Готово <span id="tab-n-done"></span></button>
+    </div>
+    <div class="columns">
+    <div class="col active" data-col="todo"><h3>Очередь <span id="n-todo"></span></h3></div>
     <div class="col" data-col="running"><h3>В работе <span id="n-running"></span></h3></div>
     <div class="col" data-col="review"><h3>На ревью <span id="n-review"></span></h3></div>
     <div class="col" data-col="done"><h3>Готово / отклонено <span id="n-done"></span></h3></div>
@@ -86,7 +96,7 @@
     </div>
     <label>Название</label><input id="f-title" placeholder="Коротко: что сделать">
     <label>Описание для агента</label><textarea id="f-prompt" placeholder="Что именно, где, критерии готовности. Чем конкретнее — тем лучше результат."></textarea>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('dlg-new').close()">Отмена</button>
       <button class="primary" id="f-submit">Отправить агенту</button>
     </div>
@@ -99,7 +109,7 @@
     <p style="color:var(--mute);margin:0 0 6px">Одна большая цель. Майкл изучит репозиторий, разобьёт на подзадачи и раздаст команде. Каждая подзадача — отдельное ревью.</p>
     <label>Репозиторий</label><select id="m-repo"></select>
     <label>Цель</label><textarea id="m-goal" placeholder="Например: добавить в calc степень и процент, покрыть тестами, обновить README"></textarea>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('dlg-mission').close()">Отмена</button>
       <button class="primary" id="m-submit">Запустить планирование</button>
     </div>
@@ -129,10 +139,12 @@
     </div>
     <div class="report-filters" id="report-filters"></div>
     <input id="report-search" placeholder="Поиск по имени / suite / файлу…">
+    <div class="table-scroll">
     <table class="report-table">
       <thead><tr><th>Тест</th><th>Suite</th><th>Файл</th><th>Длительность</th><th>Статус</th></tr></thead>
       <tbody id="report-table-body"></tbody>
     </table>
+    </div>
   </div>
 </dialog>
 
