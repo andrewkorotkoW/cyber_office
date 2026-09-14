@@ -9,8 +9,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>agent_office</string>
-  <key>CFBundleDisplayName</key><string>agent_office</string>
+  <key>CFBundleName</key><string>КИБЕР_ОФИС</string>
+  <key>CFBundleDisplayName</key><string>КИБЕР_ОФИС</string>
   <key>CFBundleIdentifier</key><string>local.agent-office</string>
   <key>CFBundleVersion</key><string>0.1</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
