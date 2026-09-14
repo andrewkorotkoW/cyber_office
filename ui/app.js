@@ -26,7 +26,7 @@ const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { h
 const costLabel = (usd) => usd ? ` · ≈$${usd.toFixed(2)} по API` : '';
 const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n }).title.split('·')[0].trim();
 // круглый аватар-портрет агента (лента событий, карточки задач, шапка миссии) — пусто, если у агента нет avatar
-const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name === n); return a && a.avatar ? `<img class="avatar" width="${size}" height="${size}" src="/ui/assets/portraits/${esc(a.avatar)}" alt="">` : ''; };
+const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name === n); return a && a.avatar ? `<img class="avatar${a.state && a.state !== 'idle' ? ' busy' : ''}" data-agent="${esc(a.name)}" style="--ac:${esc(a.color || '#ff4fa3')}" width="${size}" height="${size}" src="/ui/assets/portraits/${esc(a.avatar)}" alt="">` : ''; };
 
 
 // Свой диалог вместо системных prompt/confirm/alert (у системных — чужой шрифт и питоновская ракета).
@@ -571,6 +571,8 @@ function updateModeBusy() {
   m.classList.toggle('busy', busy);
   const n = (STATE.agents || []).filter(a => a.state && a.state !== 'idle').length;
   m.title = busy ? `работают: ${n}` : 'все свободны';
+  // портреты в ленте и на карточках светятся цветом агента, пока он работает
+  for (const a of (STATE.agents || [])) document.querySelectorAll(`.avatar[data-agent="${a.name}"]`).forEach(el => el.classList.toggle('busy', !!a.state && a.state !== 'idle'));
 }
 
 // Аватар выбранного агента в окне новой задачи.

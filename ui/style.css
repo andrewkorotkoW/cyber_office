@@ -173,3 +173,8 @@ dialog .head .head-person .who { color:var(--who,#ff4fa3); font-size:12px; lette
 dialog .head .head-person.dwight { --who:#ff9a3c }
 dialog .head .head-person.michael { --who:#4f8cff }
 dialog .head h3 { align-self:center }
+
+/* портрет работающего агента светится его цветом */
+.avatar { transition:box-shadow .3s }
+.avatar.busy { border-color:var(--ac,#ff4fa3); box-shadow:0 0 4px var(--ac,#ff4fa3), 0 0 10px var(--ac,#ff4fa3); animation:avatar-pulse 1.8s ease-in-out infinite }
+@keyframes avatar-pulse { 0%,100% { box-shadow:0 0 3px var(--ac,#ff4fa3), 0 0 8px var(--ac,#ff4fa3) } 50% { box-shadow:0 0 6px var(--ac,#ff4fa3), 0 0 16px var(--ac,#ff4fa3) } }
