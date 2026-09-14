@@ -270,18 +270,46 @@
     row1: { y: 350, x0: 230, x1: 538 },
     row2: { y: 410, x0: 150, x1: 618 },
   };
+  // footprint стола вокруг точки home — тот же прямоугольник, что рисует drawActors() через
+  // sprite(DESK, home.x - S(28), home.y - S(8), ..., HS): половина ширины по x, отступы вверх/вниз по y.
+  // Нужен, чтобы проверять препятствия по фактическому прямоугольнику стола, а не только по точке home —
+  // иначе стол мог «повиснуть» над препятствием, даже если сама точка home снаружи (старый баг).
+  const DESK_FOOT = (() => {
+    const size = spriteSize(DESK, HS);
+    return { halfW: size.w / 2, top: S(8), bottom: size.h - S(8) };
+  })();
+  const DESK_MIN_GAP = spriteSize(DESK, HS).w; // минимальное расстояние между соседними столами — не меньше ширины стола
+  // раздувает препятствие на половину ширины стола по x и на верхний/нижний отступ по y (сумма Минковского) —
+  // после этого достаточно оттолкнуть от раздутого прямоугольника саму точку home, чтобы весь прямоугольник
+  // стола оказался снаружи исходного препятствия
+  function inflateRectForDesk(r) {
+    return { x: r.x - DESK_FOOT.halfW, y: r.y - DESK_FOOT.bottom, w: r.w + DESK_FOOT.halfW * 2, h: r.h + DESK_FOOT.top + DESK_FOOT.bottom };
+  }
+  // раздвигает столы одного ряда так, чтобы соседние не пересекались (сортировка по x не нужна — точки
+  // ряда уже строятся по возрастанию x), и повторно проверяет препятствия — сдвиг вправо мог вернуть точку в одно из них
+  function enforceRowSpacing(points, inflatedObstacles) {
+    for (let i = 1; i < points.length; i++) {
+      const minX = points[i - 1].x + DESK_MIN_GAP;
+      if (points[i].x < minX) points[i] = pointOutsideObstacles({ x: minX, y: points[i].y }, inflatedObstacles);
+    }
+    return points;
+  }
   function computeDeskPositions(n, obstacles) {
     obstacles = obstacles || [];
+    const inflated = obstacles.map(inflateRectForDesk);
     const rows = n <= 3
       ? [{ count: n, band: CYBER_DESK_BANDS.single }]
       : [{ count: Math.ceil(n / 2), band: CYBER_DESK_BANDS.row1 }, { count: Math.floor(n / 2), band: CYBER_DESK_BANDS.row2 }];
     const positions = [];
     for (const row of rows) {
       const { count, band } = row;
+      if (!count) continue;
+      let rowPoints = [];
       for (let i = 0; i < count; i++) {
         const x = Math.round(count === 1 ? (band.x0 + band.x1) / 2 : band.x0 + (band.x1 - band.x0) * i / (count - 1));
-        positions.push(pointOutsideObstacles({ x, y: band.y }, obstacles));
+        rowPoints.push(pointOutsideObstacles({ x, y: band.y }, inflated));
       }
+      positions.push(...enforceRowSpacing(rowPoints, inflated));
     }
     return positions;
   }
@@ -494,6 +522,12 @@
     monitorBlue: '#1f3a66',
     plant: '#2f8f5c', plantDark: '#215f3f', pot: '#3a2a1c',
   };
+  // рабочие места агентов на cyberpunk-сцене — те же спрайты DESK/CHAIR/MONITOR_ON/OFF (общая геометрия
+  // и footprint для computeDeskPositions), но перекрашенные в палитру CY вместо DESK/CHAIR/MONITOR_ON —
+  // так стол/кресло/монитор агента выглядят как декоративный стол T в renderCyberStatic
+  const CYBER_DESK_COLORS = { t: CY.frame, T: CY.wood };
+  const CYBER_CHAIR_COLORS = { t: CY.chairShade, T: CY.chair };
+  const CYBER_MONITOR_COLORS = { k: CY.frame, b: CY.monitorBlue, T: CY.buildingB };
   const WINDOW_BOTTOM = 144, SILL_Y = 144, SILL_H = 10, NEON_Y = SILL_Y + SILL_H;
   function generateBuildings() {
     const list = []; let x = 0;
@@ -640,17 +674,29 @@
     o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + S(2), TRAY_OUT.y - S(6), S(28), S(4));
     // офисные коты, гуляющие по полу — до столов/подписей; коты в прыжке или уже на столе рисуются позже, поверх стола и человека
     drawCats(t, c => !c.jump && !c.onDesk);
-    // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног
+    // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног;
+    // на cyberpunk-сцене та же геометрия перекрашена в палитру CY (CYBER_DESK/CHAIR/MONITOR_COLORS) —
+    // рабочие места агентов выглядят частью сцены, а не наложенным арт-стилем arcade/gameboy
+    const cyber = THEME_NAME === 'cyberpunk';
     for (const a of agents) {
       const on = a.state === 'working';
-      sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), null, HS);
-      sprite(on ? MONITOR_ON : MONITOR_OFF, a.home.x - S(10), a.home.y - S(44), null, HS);
-      if (on && Math.floor(t / 120) % 2) { o.fillStyle = '#9cc4ff'; o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2)); o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2)); }
+      sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), cyber ? CYBER_CHAIR_COLORS : null, HS);
+      sprite(on ? MONITOR_ON : MONITOR_OFF, a.home.x - S(10), a.home.y - S(44), cyber ? CYBER_MONITOR_COLORS : null, HS);
+      if (on && Math.floor(t / 120) % 2) {
+        o.fillStyle = cyber ? CY.neonBlue : '#9cc4ff';
+        o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2)); o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2));
+      }
+      if (cyber && on) { // неоновое свечение экрана — пульсирует, как неоновый кант колонны/подсветка декоративного стола
+        const glow = 0.3 + 0.3 * Math.sin(t / 260 + a.home.x);
+        o.globalAlpha = glow; o.fillStyle = CY.neonBlue;
+        o.fillRect(a.home.x - S(12), a.home.y - S(46), S(24), S(4));
+        o.globalAlpha = 1;
+      }
       if (a.state === 'planning') sprite(BOARD, a.home.x - S(16), a.home.y - S(72), null, HS);
       if (a.banana > 0) sprite(DOC_ICON, a.home.x + S(16), a.home.y - S(16), null, HS);
     }
     for (const a of agents) drawHuman(a, t);
-    for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), null, HS);
+    for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), cyber ? CYBER_DESK_COLORS : null, HS);
     // коты, запрыгнувшие на стол (или летящие туда/обратно) — поверх стола и человека
     drawCats(t, c => c.jump || c.onDesk);
     // подписи
@@ -789,7 +835,7 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS,
-      characterFor, CHAR_PALETTE, CHAR_HEADS, humanRows,
+      characterFor, CHAR_PALETTE, CHAR_HEADS, humanRows, DESK_FOOT, DESK_MIN_GAP,
     };
   }
 })();

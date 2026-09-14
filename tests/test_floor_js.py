@@ -30,6 +30,40 @@ def test_desk_positions_still_work():
     assert out["positions"] == 3
 
 
+@pytest.mark.parametrize("n", range(1, 7))
+def test_cyberpunk_desk_positions_clear_obstacles_and_each_other(n):
+    """computeDeskPositions(n, sceneObstacleRects()) не должен давать столам, чей реальный
+    bounding box (footprint DESK, экспортированный как DESK_FOOT) пересекается с препятствиями
+    сцены или друг с другом — раньше стол на краю полосы CYBER_DESK_BANDS мог повиснуть над креслом."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const rects = F.sceneObstacleRects();
+        const positions = F.computeDeskPositions({n}, rects);
+        console.log(JSON.stringify({{ positions, rects, foot: F.DESK_FOOT, minGap: F.DESK_MIN_GAP }}));
+    """)
+    positions, rects, foot, min_gap = out["positions"], out["rects"], out["foot"], out["minGap"]
+    assert len(positions) == n
+
+    def bbox(p):
+        return {"x": p["x"] - foot["halfW"], "y": p["y"] - foot["top"], "w": foot["halfW"] * 2, "h": foot["top"] + foot["bottom"]}
+
+    def overlap(a, b):
+        return a["x"] < b["x"] + b["w"] and a["x"] + a["w"] > b["x"] and a["y"] < b["y"] + b["h"] and a["y"] + a["h"] > b["y"]
+
+    for pos in positions:
+        box = bbox(pos)
+        hits = [r for r in rects if overlap(box, r)]
+        assert not hits, f"n={n} стол {pos} пересекает препятствия {hits}"
+
+    by_row = {}
+    for p in positions:
+        by_row.setdefault(p["y"], []).append(p["x"])
+    for y, xs in by_row.items():
+        xs.sort()
+        for i in range(1, len(xs)):
+            assert xs[i] - xs[i - 1] >= min_gap, f"n={n} ряд y={y}: столы слишком близко {xs}"
+
+
 def test_named_agents_get_their_own_character():
     out = _run_node(f"""
         const F = require({json.dumps(str(FLOOR_JS))});
