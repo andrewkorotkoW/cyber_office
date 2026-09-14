@@ -16,10 +16,19 @@ body { margin:0; color:var(--text); font:14px/1.45 "Pixelify Sans", ui-monospace
   background:var(--bg); background-image:linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size:16px 16px; image-rendering:pixelated }
 header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:3px solid var(--line); background:var(--panel) }
 header h1 { font-size:18px; margin:0; letter-spacing:1px; text-transform:uppercase; text-shadow:2px 2px 0 var(--shadow) }
-header h1.neon { color:#ff4fa3; letter-spacing:2px; text-shadow:0 0 4px #ff4fa3, 0 0 12px #ff4fa3, 0 0 24px #ff2d8a, 2px 2px 0 #3b0a26; animation:neon-flicker 4s infinite }
+header h1.neon { color:#ff4fa3; letter-spacing:2px; text-transform:none; font-weight:700; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26; animation:neon-sign 36s infinite }
 header .team-strip { height:40px; width:auto; image-rendering:pixelated; border:2px solid var(--line); box-shadow:0 0 8px #ff4fa3aa; margin-left:6px; transition:transform .15s }
 header .team-strip:hover { transform:scale(3.2); transform-origin:left top; z-index:50; position:relative }
-@keyframes neon-flicker { 0%,93%,100% { opacity:1 } 94% { opacity:.75 } 96% { opacity:1 } 98% { opacity:.85 } }
+/* вывеска: 34.5 с ровного свечения, потом ~1.5 с розжига с мерцанием и ярким свечением */
+@keyframes neon-sign {
+  0%,95.8% { color:#ff4fa3; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26 }
+  96% { color:#ff9ccf; text-shadow:0 0 6px #ff4fa3, 0 0 18px #ff4fa3, 0 0 36px #ff2d8a, 2px 2px 0 #3b0a26 }
+  96.6% { color:#8a2a58; text-shadow:0 0 2px #ff4fa3, 2px 2px 0 #3b0a26 }
+  97.2% { color:#ffd6ea; text-shadow:0 0 8px #ff4fa3, 0 0 24px #ff4fa3, 0 0 48px #ff2d8a, 2px 2px 0 #3b0a26 }
+  97.8% { color:#b03a72; text-shadow:0 0 3px #ff4fa3, 2px 2px 0 #3b0a26 }
+  98.4%,99.6% { color:#ffe3f1; text-shadow:0 0 8px #ff4fa3, 0 0 24px #ff4fa3, 0 0 48px #ff2d8a, 2px 2px 0 #3b0a26 }
+  100% { color:#ff4fa3; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26 }
+}
 header .mode { font-size:12px; color:var(--mute); padding:3px 8px; border:2px solid var(--line) }
 header .mode.fake { color:var(--warn); border-color:var(--warn) }
 header .spacer { flex:1 }

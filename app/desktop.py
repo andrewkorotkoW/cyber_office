@@ -54,8 +54,8 @@ def _set_app_name() -> None:
     try:
         from Foundation import NSBundle
         info = NSBundle.mainBundle().infoDictionary()
-        info["CFBundleName"] = "КИБЕР_ОФИС"
-        info["CFBundleDisplayName"] = "КИБЕР_ОФИС"
+        info["CFBundleName"] = "cyber_office"
+        info["CFBundleDisplayName"] = "cyber_office"
     except Exception:
         log.debug("app name not set", exc_info=True)
 
@@ -79,7 +79,7 @@ def main() -> None:
         threading.Thread(target=_serve, args=(config.PORT,), daemon=True).start()
         if not _wait_ready(url):
             print("Сервер не поднялся", file=sys.stderr); sys.exit(1)
-    window = webview.create_window("КИБЕР_ОФИС", url, width=1380, height=900, min_size=(1000, 680),
+    window = webview.create_window("cyber_office", url, width=1380, height=900, min_size=(1000, 680),
                                    background_color="#0e1117")
     webview.start(_set_dock_icon, debug=False)
 
