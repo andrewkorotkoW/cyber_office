@@ -78,7 +78,7 @@
   </div>
 </dialog>
 <dialog id="dlg-new">
-  <div class="head"><img class="head-avatar" src="ui/assets/portraits/cyborg.png" alt="Дуайт" title="Дуайт принимает задачи"><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="head"><div class="head-person dwight"><img src="ui/assets/portraits/cyborg.png" alt="Дуайт"><div class="who">Дуайт</div></div><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content">
     <div class="row">
       <div><label>Агент</label><div class="agent-pick"><img id="f-agent-avatar" class="pick-avatar" src="" alt="" hidden><select id="f-agent"></select></div></div>
@@ -94,7 +94,7 @@
 </dialog>
 
 <dialog id="dlg-mission">
-  <div class="head"><img class="head-avatar lead" src="ui/assets/portraits/beard.png" alt="Майкл" title="Майкл планирует миссии"><h3>Новая миссия</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="head"><div class="head-person michael"><img src="ui/assets/portraits/beard.png" alt="Майкл"><div class="who">Майкл</div></div><h3>Новая миссия</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content">
     <p style="color:var(--mute);margin:0 0 6px">Одна большая цель. Майкл изучит репозиторий, разобьёт на подзадачи и раздаст команде. Каждая подзадача — отдельное ревью.</p>
     <label>Репозиторий</label><select id="m-repo"></select>
