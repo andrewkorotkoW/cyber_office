@@ -348,7 +348,17 @@
   }
 
   // ---------------------------------------------------------------- отрисовка
+  let bgImg = null; // фон-картинка (прототип выбора фона), null = рисованный этаж
+  function setBackground(url) {
+    if (!url) { bgImg = null; return; }
+    const im = new Image(); im.onload = () => { bgImg = im; }; im.src = url;
+  }
   function drawWorld(t) {
+    if (bgImg) { // картинка вместо пола/стены; мебель и люди рисуются поверх
+      o.drawImage(bgImg, 0, 0, LW, LH);
+      sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5));
+      return;
+    }
     // пол — плитка
     for (let y = 80; y < LH; y += 16) for (let x = 0; x < LW; x += 16) {
       o.fillStyle = ((x + y) / 16) % 2 ? TH.floor1 : TH.floor2; o.fillRect(x, y, 16, 16);
@@ -448,7 +458,7 @@
     requestAnimationFrame(frame);
   }
 
-  window.Floor = { setAgents, setState, envelope, setTheme(t) { TH = Object.assign({}, TH, t); } };
+  window.Floor = { setAgents, setState, envelope, setBackground, setTheme(t) { TH = Object.assign({}, TH, t); } };
   document.fonts && document.fonts.load('8px "Pixelify Sans"').catch(() => {});
   requestAnimationFrame(frame);
 })();

@@ -525,3 +525,11 @@ function applyTheme(name) {
 }
 document.querySelectorAll('#themes button').forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
 applyTheme((() => { try { return localStorage.getItem('ao_theme'); } catch (e) { return null; } })() || 'arcade');
+
+// Прототип выбора фона этажа: картинка из ui/assets поверх которой рисуется сцена.
+(function () {
+  const sel = document.getElementById('bg'); if (!sel) return;
+  let saved = ''; try { saved = localStorage.getItem('ao_bg') || ''; } catch (e) {}
+  sel.value = saved; if (window.Floor) Floor.setBackground(saved || null);
+  sel.addEventListener('change', () => { try { localStorage.setItem('ao_bg', sel.value); } catch (e) {} Floor.setBackground(sel.value || null); });
+})();
