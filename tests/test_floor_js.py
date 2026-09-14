@@ -95,17 +95,20 @@ def test_char_heads_are_distinct_and_well_formed():
 
 
 def test_named_agent_poses_match_generic_layout_size():
+    """Ходьбы больше нет (люди всегда сидят/стоят на a.home) — но сидячие позы по состояниям
+    (working: type1/type2, review: lean, failed, done) должны давать тот же размер спрайта, что
+    и раньше у walk1/walk2, иначе рисунок человечка рассыпется."""
     out = _run_node(f"""
         const F = require({json.dumps(str(FLOOR_JS))});
         const sizes = {{}};
         for (const name of ['michael', 'dwight', 'pam']) {{
           sizes[name] = {{}};
-          for (const pose of ['stand', 'walk1', 'walk2', 'type1', 'type2']) {{
+          for (const pose of ['stand', 'type1', 'type2', 'lean', 'failed', 'done']) {{
             sizes[name][pose] = F.humanRows(pose, F.CHAR_HEADS[name]).length;
           }}
         }}
         console.log(JSON.stringify(sizes));
     """)
     for name in ("michael", "dwight", "pam"):
-        for pose in ("stand", "walk1", "walk2", "type1", "type2"):
+        for pose in ("stand", "type1", "type2", "lean", "failed", "done"):
             assert out[name][pose] == 26   # 8 (голова) + 8 (торс) + 10 (ноги) — как у прежнего генератора людей

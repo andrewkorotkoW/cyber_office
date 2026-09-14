@@ -1,6 +1,7 @@
 /* Пиксельный офис. Логическое разрешение 768×432 «пикселей», рисуется в offscreen-canvas
    и масштабируется целым числом без сглаживания — так пиксели остаются чёткими.
-   Люди ходят: за задачей к лотку «входящие», с готовой работой — к лотку «ревью».
+   Люди сидят на своих местах (a.home) и не ходят — задача/документ прилетают на стол короткой
+   анимацией (envelope), а сидячая поза меняется по a.state (idle/working/review/planning/failed/done).
    Тема cyberpunk рисует отдельную ночную сцену вместо старого рисованного этажа (arcade/gameboy). */
 (function () {
   const hasDOM = typeof document !== 'undefined' && typeof window !== 'undefined';
@@ -97,17 +98,22 @@
   // печать: руки убраны по бокам и вытянуты вперёд к клавиатуре (2 кадра — мигание пальцев)
   const TORSO_TYPE1 = TORSO.slice(0, 6).concat([TORSO_ARM_GAP, rb(['.', 2], ['f', 3], ['s', 6], ['f', 3], ['.', 2])]);
   const TORSO_TYPE2 = TORSO.slice(0, 6).concat([TORSO_ARM_GAP, rb(['.', 3], ['f', 2], ['s', 6], ['f', 2], ['.', 3])]);
-  // ноги: k — брюки, d — обувь; меняются только последние 2 ряда (шаг при ходьбе)
+  // откинулся в кресле (review): руки заведены за голову — кисти видны у самых плеч, а не по бокам
+  const TORSO_LEAN = [rb(['e', 1], ['s', 2], ['.', 1], ['f', 8], ['.', 1], ['s', 2], ['e', 1])].concat(TORSO.slice(1));
+  // обхватил голову руками (failed): кисти подняты к лицу, у нижнего края головы
+  const TORSO_FAILED = [rb(['e', 2], ['s', 3], ['.', 6], ['s', 3], ['e', 2])].concat(TORSO.slice(1));
+  // жест «победа» сидя (done): руки прямо вверх, кисти над плечами
+  const TORSO_DONE = [rb(['s', 2], ['e', 1], ['f', 10], ['e', 1], ['s', 2])].concat(TORSO.slice(1));
+  // ноги: k — брюки, d — обувь (ходьбы больше нет — люди всегда сидят/стоят на своём месте, поза только одна)
   const LEGS_BODY = [rb(['f', 16])].concat(Array(7).fill(rb(['k', 6], ['.', 4], ['k', 6])));
   const LEGS_STAND = LEGS_BODY.concat([rb(['d', 6], ['.', 4], ['d', 6]), rb(['d', 6], ['.', 4], ['d', 6])]);
-  const LEGS_WALK1 = LEGS_BODY.concat([rb(['d', 4], ['.', 8], ['d', 4]), rb(['d', 4], ['.', 8], ['d', 4])]);
-  const LEGS_WALK2 = LEGS_BODY.concat([rb(['.', 2], ['d', 12], ['.', 2]), rb(['.', 2], ['d', 12], ['.', 2])]);
 
   function humanRows(pose, head) {
-    if (pose === 'walk1') return head.concat(TORSO, LEGS_WALK1);
-    if (pose === 'walk2') return head.concat(TORSO, LEGS_WALK2);
     if (pose === 'type1') return head.concat(TORSO_TYPE1, LEGS_STAND);
     if (pose === 'type2') return head.concat(TORSO_TYPE2, LEGS_STAND);
+    if (pose === 'lean') return head.concat(TORSO_LEAN, LEGS_STAND);
+    if (pose === 'failed') return head.concat(TORSO_FAILED, LEGS_STAND);
+    if (pose === 'done') return head.concat(TORSO_DONE, LEGS_STAND);
     return head.concat(TORSO, LEGS_STAND);
   }
 
@@ -115,13 +121,11 @@
   const CHAIR = ['.tttttt.', '.tTTTTt.', '.tTTTTt.', '.tttttt.', '..t..t..', '..t..t..']; // стул позади стола
   const MONITOR_ON = scale2(['kkkkkkkkkk', 'kbbbbbbbbk', 'kbbbbbbbbk', 'kbbbbbbbbk', 'kbbbbbbbbk', 'kkkkkkkkkk', '....kk....', '...kkkk...']);
   const MONITOR_OFF = MONITOR_ON.map(r => r.replace(/b/g, 'T'));
-  const TRAY = scale2(['..tttttttttttt..', '.tTTTTTTTTTTTTt.', 'tTTTTTTTTTTTTTTt', 'tTTTTTTTTTTTTTTt', 'tttttttttttttttt']);
   const ENVELOPE = scale2(['wwwwww', 'wdwwdw', 'wwddww', 'wwwwww']);
   const PLANT = scale2(['..pp..', '.pqpp.', 'pqppqp', '.ppqp.', '..tt..', '.tttt.']);
   const BOARD = scale2(['tttttttttttttttt', 'tyyyyyyyyyyyyyyt', 'tydyyydydyyydyyt', 'tyyyyyyyyyyyyyyt', 'tydydyyydyyydyyt', 'tyyyyyyyyyyyyyyt', 'tttttttttttttttt']);
-  // документ с галочкой — общая замена банана: маленький возле стола, поднятый над головой на ревью
+  // документ с галочкой — прилетает на стол короткой анимацией (envelope('out'/'banana', name))
   const DOC_ICON = ['wwwwww', 'wddddw', 'wwwwww', 'wdddw.', 'wwwwww', 'wwwggw'];
-  const ARM_DOC = ['.www.', 'wdddw', '.www.', '..s..', '..s..', '..s..', '..f..'];
 
   // ---------------------------------------------------------------- доп. мебель, наполняющая офис (цвета — из TH/P, не хардкод)
   const CLOCK = [
@@ -228,9 +232,8 @@
   const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255; return `rgb(${r * k | 0},${g * k | 0},${b * k | 0})`; };
 
   // ---------------------------------------------------------------- мир
-  const TRAY_IN = { x: 42, y: 276 }, TRAY_OUT = { x: LW - 90, y: 276 };
   const DESK_HOME_Y = 288;
-  let agents = [];   // {name,title,color,state, x,y, home:{x,y}, queue:[], carry:null, frame, banana:0}
+  let agents = [];   // {name,title,color,state, x,y, home:{x,y}, frame, mail:null} — люди больше не ходят, стоят на home
   // формула столов для рисованного этажа (arcade/gameboy) — не задевает декоративную мебель cyberpunk-сцены
   const deskX = (i, n) => Math.round(LW / 2 + (i - (n - 1) / 2) * Math.min(255, (LW - 150) / Math.max(1, n)));
 
@@ -324,15 +327,22 @@
     agents = list.map((a, i) => {
       const prev = agents.find(x => x.name === a.name);
       const home = homes[i];
-      return Object.assign({ x: home.x, y: home.y, queue: [], carry: null, frame: 0, banana: 0, walking: false }, prev || {}, a, { home });
+      return Object.assign({ x: home.x, y: home.y, frame: 0, mail: null }, prev || {}, a, { home });
     });
   }
   function setState(name, state) { const a = agents.find(x => x.name === name); if (a) a.state = state; }
+  // конверт/документ прилетает прямо на стол агента короткой анимацией — без похода к лоткам:
+  // envelope() лишь заводит временное поле a.mail (тип + счётчик кадров), drawActors рисует его у a.home
+  // несколько кадров (с коротким «падением» сверху) и гасит, когда кадры кончаются
+  const MAIL_SPECS = {
+    in: { sprite: ENVELOPE, life: 40 },     // новая задача — конверт
+    out: { sprite: DOC_ICON, life: 40 },    // отправлено на ревью — документ
+    banana: { sprite: DOC_ICON, life: 600 }, // одобрено — документ с галочкой лежит на столе подольше
+  };
   function envelope(kind, name) {
     const a = agents.find(x => x.name === name); if (!a) return;
-    if (kind === 'in') a.queue.push({ walk: { x: TRAY_IN.x + S(36), y: TRAY_IN.y + S(8) } }, { pick: 'env' }, { walk: a.home }, { drop: true });
-    else if (kind === 'out') a.queue.push({ pick: 'env' }, { walk: { x: TRAY_OUT.x - S(16), y: TRAY_OUT.y + S(8) } }, { drop: true }, { walk: a.home });
-    else if (kind === 'banana') a.banana = 600;
+    const spec = MAIL_SPECS[kind]; if (!spec) return;
+    a.mail = { kind, life: spec.life, total: spec.life };
   }
 
   // площадь пола для прогулок котов — считается от LW/LH, не от текущих чисел
@@ -482,17 +492,6 @@
     o.font = '11px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'middle';
     o.fillStyle = '#1c2433'; o.fillText('мяу', bx + bw / 2, by + bh / 2 + 1);
     o.restore();
-  }
-
-  function step(a) {
-    if (a.wait > 0) { a.wait--; return; }
-    const act = a.queue[0]; if (!act) { a.walking = false; return; }
-    if (act.walk) {
-      const dx = act.walk.x - a.x, dy = act.walk.y - a.y, dist = Math.hypot(dx, dy);
-      if (dist < 1) { a.x = act.walk.x; a.y = act.walk.y; a.queue.shift(); a.walking = false; return; }
-      const v = 1.8; a.x += dx / dist * v; a.y += dy / dist * v; a.walking = true; a.dir = dx < 0 ? -1 : 1;
-    } else if (act.pick) { a.carry = act.pick; a.wait = 18; a.queue.shift(); }
-    else if (act.drop) { a.carry = null; a.wait = 12; a.queue.shift(); }
   }
 
   // ---------------------------------------------------------------- подписи с читаемостью на тёмной cyberpunk-сцене
@@ -667,11 +666,11 @@
   }
 
   // подвижные объекты и мебель агентов — общие для всех тем, рисуются каждый кадр поверх фона
+  const MONITOR_FAIL_COLORS = { k: '#3a1010', b: '#ff4b4b' };
+  // «падение» конверта/документа на стол — первые MAIL_DROP_FRAMES кадров он опускается сверху, затем лежит неподвижно
+  const MAIL_DROP_FRAMES = 12;
   function drawActors(t) {
     sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5)); // лежанка котов в углу
-    sprite(TRAY, TRAY_IN.x, TRAY_IN.y, null, HS); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y, null, HS);
-    o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + S(2), TRAY_IN.y - S(6), S(28), S(4));
-    o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + S(2), TRAY_OUT.y - S(6), S(28), S(4));
     // офисные коты, гуляющие по полу — до столов/подписей; коты в прыжке или уже на столе рисуются позже, поверх стола и человека
     drawCats(t, c => !c.jump && !c.onDesk);
     // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног;
@@ -680,11 +679,17 @@
     const cyber = THEME_NAME === 'cyberpunk';
     for (const a of agents) {
       const on = a.state === 'working';
+      const failed = a.state === 'failed';
+      const failBlink = Math.floor(t / 300) % 2 === 0;
       sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), cyber ? CYBER_CHAIR_COLORS : null, HS);
-      sprite(on ? MONITOR_ON : MONITOR_OFF, a.home.x - S(10), a.home.y - S(44), cyber ? CYBER_MONITOR_COLORS : null, HS);
-      if (on && Math.floor(t / 120) % 2) {
+      let monitorRows = on ? MONITOR_ON : MONITOR_OFF, monitorColors = cyber ? CYBER_MONITOR_COLORS : null;
+      if (failed) { monitorRows = failBlink ? MONITOR_ON : MONITOR_OFF; monitorColors = MONITOR_FAIL_COLORS; }
+      sprite(monitorRows, a.home.x - S(10), a.home.y - S(44), monitorColors, HS);
+      if (on && !failed) { // «бегущие строчки» — три полосы мигают с разным периодом, имитируя скролл кода
         o.fillStyle = cyber ? CY.neonBlue : '#9cc4ff';
-        o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2)); o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2));
+        if (Math.floor(t / 120) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2));
+        if (Math.floor(t / 160) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2));
+        if (Math.floor(t / 200) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(32), S(4), S(2));
       }
       if (cyber && on) { // неоновое свечение экрана — пульсирует, как неоновый кант колонны/подсветка декоративного стола
         const glow = 0.3 + 0.3 * Math.sin(t / 260 + a.home.x);
@@ -692,8 +697,24 @@
         o.fillRect(a.home.x - S(12), a.home.y - S(46), S(24), S(4));
         o.globalAlpha = 1;
       }
-      if (a.state === 'planning') sprite(BOARD, a.home.x - S(16), a.home.y - S(72), null, HS);
-      if (a.banana > 0) sprite(DOC_ICON, a.home.x + S(16), a.home.y - S(16), null, HS);
+      if (failed && failBlink) { // красное свечение монитора вместо синего, пока моргает
+        o.globalAlpha = 0.5; o.fillStyle = '#ff4b4b';
+        o.fillRect(a.home.x - S(12), a.home.y - S(46), S(24), S(4));
+        o.globalAlpha = 1;
+      }
+      if (a.state === 'planning') {
+        sprite(BOARD, a.home.x - S(16), a.home.y - S(72), null, HS);
+        const glow = 0.25 + 0.25 * Math.sin(t / 500); // доска/голограмма подсвечивается, пока агент планирует
+        o.globalAlpha = glow; o.fillStyle = cyber ? CY.neonBlue : TH.win;
+        o.fillRect(a.home.x - S(16), a.home.y - S(74), S(32), S(4));
+        o.globalAlpha = 1;
+      }
+      if (a.mail) { // конверт/документ прилетел на стол — короткое падение сверху, затем лежит до конца life
+        const spec = MAIL_SPECS[a.mail.kind];
+        const dropped = Math.min(1, (spec.total - a.mail.life) / MAIL_DROP_FRAMES);
+        const yOff = -S(16) - Math.round((1 - dropped) * S(24));
+        sprite(spec.sprite, a.home.x + S(16), a.home.y + yOff, null, HS);
+      }
     }
     for (const a of agents) drawHuman(a, t);
     for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), cyber ? CYBER_DESK_COLORS : null, HS);
@@ -701,14 +722,13 @@
     drawCats(t, c => c.jump || c.onDesk);
     // подписи
     o.font = '600 14px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'top';
+    const STATE_LABELS = { idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует', failed: 'ошибка', done: 'готово' };
     for (const a of agents) {
       drawLabel(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6), TH.text);
       o.font = '13px "Pixelify Sans", monospace';
-      drawLabel({ idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует' }[a.state] || a.state, a.home.x, a.home.y + S(24), TH.mute);
+      drawLabel(STATE_LABELS[a.state] || a.state, a.home.x, a.home.y + S(24), TH.mute);
       o.font = '600 14px "Pixelify Sans", monospace';
     }
-    drawLabel('задачи', TRAY_IN.x + S(16), TRAY_IN.y + S(14), TH.tray);
-    drawLabel('ревью', TRAY_OUT.x + S(16), TRAY_OUT.y + S(14), TH.tray2);
   }
 
   function drawWorld(t) {
@@ -755,6 +775,13 @@
     }
   }
 
+  // короткий взгляд в сторону, пока агент простаивает — не более ~0.4с раз в ~6.5с, сдвинут по фазе на seed,
+  // чтобы соседние агенты не поворачивали голову синхронно; чистая функция от t, без своего состояния
+  function idleGlanceDir(t, seed) {
+    const period = 6500, phase = (t + seed * 2200) % period;
+    return phase < 400 ? -1 : 1;
+  }
+
   function drawHuman(a, t) {
     const i = agents.indexOf(a);
     const pal = CHAR_PALETTE[a.name];
@@ -763,14 +790,23 @@
       ? { f: pal.jacket, e: shade(pal.jacket, 0.78), h: pal.hair, s: pal.skin, d: P.d, k: P.k, z: pal.eye }
       : { f: a.color, e: shade(a.color, 0.72), h: HAIR_COLORS[i % HAIR_COLORS.length], s: P.s, d: P.d, k: P.k };
     let pose = 'stand';
-    if (a.walking) pose = Math.floor(t / 140) % 2 ? 'walk1' : 'walk2';
-    else if (a.state === 'working' && !a.queue.length) pose = Math.floor(t / 160) % 2 ? 'type1' : 'type2';
+    if (a.state === 'working') pose = Math.floor(t / 160) % 2 ? 'type1' : 'type2';
+    else if (a.state === 'review') pose = 'lean';
+    else if (a.state === 'failed') pose = 'failed';
+    else if (a.state === 'done') pose = 'done';
     const rows = humanRows(pose, head);
     const { w, h } = spriteSize(rows, HS);
-    const x = Math.round(a.x) - Math.round(w / 2), y = Math.round(a.y) - h - S(8);
+    // агент всегда на своём месте (a.home) — не ходит; дефолтная поза смотрит вперёд (dir=1). Пока кот
+    // визитит его стол (cat.deskGoal === a.name), агент поворачивается к коту и возвращается после его ухода —
+    // направление считается заново каждый кадр, отдельное поле на агенте не нужно
+    const visitingCat = cats.find(c => c.deskGoal === a.name);
+    const dir = visitingCat ? visitingCat.deskSide : (a.state === 'idle' ? idleGlanceDir(t, i) : 1);
+    // лёгкое дыхание в простое — синусоидальное покачивание всего силуэта по вертикали на 1 «пиксель»
+    const breathe = a.state === 'idle' ? Math.round(Math.sin(t / 900 + i) * S(1)) : 0;
+    const x = Math.round(a.x) - Math.round(w / 2), y = Math.round(a.y) - h - S(8) + breathe;
     // тень
     o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + S(3), y + S(25), S(10), S(2));
-    if (a.dir === -1) {
+    if (dir === -1) {
       o.save(); o.translate(x * 2 + S(15), 0); o.scale(-1, 1);
       sprite(rows, x, y, colors, HS);
       if (pal) drawCharAccents(a.name, x, y, t, pal);
@@ -779,9 +815,7 @@
       sprite(rows, x, y, colors, HS);
       if (pal) drawCharAccents(a.name, x, y, t, pal);
     }
-    if (a.carry === 'env') sprite(ENVELOPE, x + (a.dir === -1 ? -S(12) : S(16)), y + S(14), null, HS);
-    if (a.state === 'review' && !a.queue.length) sprite(ARM_DOC, x + (a.dir === -1 ? -S(6) : S(15)), y - S(2), { f: a.color, s: colors.s }, HS);
-    if (a.state === 'idle' && !a.walking && Math.floor(t / 2800) % 4 === 0 && (t % 2800) < 120) {
+    if (a.state === 'idle' && Math.floor(t / 2800) % 4 === 0 && (t % 2800) < 120) {
       // моргание — закрываем глаза цветом кожи персонажа, позиция глаз считается через тот же масштаб, что и весь спрайт
       o.fillStyle = colors.s;
       const eye1 = pixelBox(6, 4, HS), eye2 = pixelBox(9, 4, HS);
@@ -802,7 +836,7 @@
 
   function frame(t) {
     if (!W) resize();
-    for (const a of agents) { step(a); if (a.banana > 0) a.banana--; }
+    for (const a of agents) { if (a.mail && --a.mail.life <= 0) a.mail = null; }
     for (const cat of cats) stepCat(cat);
     o.clearRect(0, 0, LW, LH);
     drawWorld(t);

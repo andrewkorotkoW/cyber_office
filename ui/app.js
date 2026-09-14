@@ -200,7 +200,8 @@ function connect() {
     else if (ev.kind === 'task.created') { Floor.envelope('in', ev.agent); termLine('state', 'ты', '✉ задача: ' + ev.data.task.title, ev.agent); loadState(); }
     else if (ev.kind === 'task.updated') {
       const t = ev.data.task; if (t.status === 'review') { Floor.envelope('out', ev.agent); Floor.setState(ev.agent, 'review'); setTimeout(() => Floor.setState(ev.agent, 'idle'), 4000); }
-      if (t.status === 'done') Floor.envelope('banana', ev.agent);   // одобрили — банан на стол
+      if (t.status === 'done') { Floor.envelope('banana', ev.agent); Floor.setState(ev.agent, 'done'); setTimeout(() => Floor.setState(ev.agent, 'idle'), 4000); }
+      if (t.status === 'failed') { Floor.setState(ev.agent, 'failed'); setTimeout(() => Floor.setState(ev.agent, 'idle'), 4000); }
       termLine('state', who, `→ ${STATUS_RU[t.status]}: ${t.title}`, ev.agent);
       if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400), ev.agent);
       loadState();
