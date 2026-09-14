@@ -16,9 +16,11 @@ body { margin:0; color:var(--text); font:14px/1.45 "Pixelify Sans", ui-monospace
   background:var(--bg); background-image:linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size:16px 16px; image-rendering:pixelated }
 header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:3px solid var(--line); background:var(--panel) }
 header h1 { font-size:18px; margin:0; letter-spacing:1px; text-transform:uppercase; text-shadow:2px 2px 0 var(--shadow) }
-header h1.neon { color:#ff4fa3; letter-spacing:2px; text-transform:none; font-weight:700; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26; animation:neon-sign 36s infinite }
+header h1.neon { font-family:'Orbitron','Pixelify Sans',monospace; font-size:20px; color:#ff4fa3; letter-spacing:3px; text-transform:uppercase; font-weight:900; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26; animation:neon-sign 36s infinite }
 header .team-strip { height:40px; width:auto; image-rendering:pixelated; border:2px solid var(--line); box-shadow:0 0 8px #ff4fa3aa; margin-left:6px; transition:transform .15s }
 header .team-strip:hover { transform:scale(3.2); transform-origin:left top; z-index:50; position:relative }
+header h1.neon.f-monoton { font-family:'Monoton','Orbitron',cursive; font-weight:400; letter-spacing:2px; font-size:22px }
+header h1.neon.f-tilt { font-family:'Tilt Neon','Orbitron',sans-serif; font-weight:400; letter-spacing:2px; font-size:22px; text-transform:none }
 /* вывеска: 34.5 с ровного свечения, потом ~1.5 с розжига с мерцанием и ярким свечением */
 @keyframes neon-sign {
   0%,95.8% { color:#ff4fa3; text-shadow:0 0 3px #ff4fa3, 0 0 8px #ff4fa3aa, 2px 2px 0 #3b0a26 }
