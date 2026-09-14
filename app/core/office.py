@@ -8,12 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
+from datetime import datetime, timedelta
 
 from app.core import memory, worktree
 from app.core.events import bus
 from app.core.planner import Planner
 from app.core.roster import Roster
-from app.core.runner import Runner
+from app.core.runner import Runner, RunResult, infra_failure_reason
 from app.core.tasks import Mission, Task, TaskStore
 
 log = logging.getLogger(__name__)
@@ -28,10 +29,13 @@ PROMPT_TEMPLATE = """Задача: {title}
 
 
 class Office:
-    def __init__(self, store: TaskStore, roster: Roster, runner: Runner, planner: Planner | None = None) -> None:
+    def __init__(self, store: TaskStore, roster: Roster, runner: Runner, planner: Planner | None = None,
+                 auto_retry_delays: tuple[float, ...] = (120.0, 300.0, 900.0), max_auto_retries: int = 3) -> None:
         self.store, self.roster, self.runner, self.planner = store, roster, runner, planner
+        self.auto_retry_delays, self.max_auto_retries = auto_retry_delays, max_auto_retries
         self._running: dict[str, asyncio.Task] = {}
         self._planning: dict[str, asyncio.Task] = {}
+        self._auto_retry: dict[str, asyncio.Task] = {}   # task_id -> отложенный автоповтор после сбоя API
 
     # ------------------------------------------------------------ задачи
     async def create_task(self, title: str, prompt: str, repo: str, agent: str) -> Task:
@@ -75,15 +79,26 @@ class Office:
             task.diff_stat = await worktree.diff_stat(task.repo, branch)
             if res.ok:
                 task.status = "review"; task.note("готово, ждёт ревью")
+                task.error, task.auto_retries, task.auto_retry_at = None, 0, None
                 task.behind_main, task.overlap_files = await worktree.staleness(task.repo, branch)
                 if task.overlap_files:
                     task.note(f"ветка отстала от main на {task.behind_main}, пересекается: {', '.join(task.overlap_files[:5])}")
                 memory.append(a.name, task.title, task.repo, res.text)
             else:
-                task.status = "failed"; task.note(f"ошибка: {res.error}")
+                reason = infra_failure_reason(res)
+                task.status = "failed"
+                task.error = reason or res.error or "неизвестная ошибка"
+                task.note(f"ошибка: {task.error}")
+                if reason:
+                    await self._handle_infra_failure(task, reason)
         except Exception as exc:
             log.exception("task %s failed", task.id)
-            task.status = "failed"; task.note(f"сбой: {exc}")
+            task.status = "failed"
+            reason = infra_failure_reason(RunResult(False, task.result or "", error=str(exc)))
+            task.error = reason or str(exc)
+            task.note(f"сбой: {exc}")
+            if reason:
+                await self._handle_infra_failure(task, reason)
         finally:
             self.store.update(task)
             a.state, a.current_task = "idle", None
@@ -91,6 +106,41 @@ class Office:
             await bus.emit("agent.state", a.name, task.id, state="idle")
             await bus.emit("task.updated", a.name, task.id, task=_pub(task))
             self.kick(a.name)
+
+    # ---------------------------------------------------- автоповтор при сбое API
+    async def _handle_infra_failure(self, task: Task, reason: str) -> None:
+        """Похоже на временный сбой API/сети (а не ошибку в промпте) — самим повторить
+        через нарастающую паузу, вместо того чтобы будить владельца на каждую мелочь.
+        Уведомляем только на первом падении и когда попытки кончились (см. telegram.py)."""
+        if task.auto_retries >= self.max_auto_retries:
+            task.auto_retry_at = None
+            await bus.emit("task.infra_failure", task.agent, task.id, task=_pub(task), reason=reason,
+                           exhausted=True, attempt=task.auto_retries, max_retries=self.max_auto_retries)
+            return
+        delay = self.auto_retry_delays[min(task.auto_retries, len(self.auto_retry_delays) - 1)]
+        is_first = task.auto_retries == 0
+        task.auto_retries += 1
+        task.auto_retry_at = (datetime.now() + timedelta(seconds=delay)).isoformat(timespec="seconds")
+        if is_first:
+            await bus.emit("task.infra_failure", task.agent, task.id, task=_pub(task), reason=reason,
+                           exhausted=False, attempt=task.auto_retries, max_retries=self.max_auto_retries, delay=delay)
+        self._auto_retry[task.id] = asyncio.create_task(self._auto_retry_after(task.id, delay))
+
+    async def _auto_retry_after(self, task_id: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        finally:
+            self._auto_retry.pop(task_id, None)
+        t = self.store.get(task_id)
+        if t and t.status == "failed":
+            await self.retry(task_id, "Автоматический повтор офиса после сбоя API — просто переотправил задачу.")
+
+    def cancel_auto_retry(self, task_id: str) -> None:
+        fut = self._auto_retry.pop(task_id, None)
+        if fut and not fut.done():
+            fut.cancel()
 
     # ------------------------------------------------------------ ревью
     async def diff(self, task_id: str) -> str:
@@ -135,8 +185,10 @@ class Office:
         t = self.store.get(task_id)
         if not t or t.status not in ("review", "failed"):
             return False
+        self.cancel_auto_retry(task_id)
         await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
-        t.status = "rejected"; t.note("отклонено" + (f": {reason}" if reason else ""))
+        t.status = "rejected"; t.auto_retries, t.auto_retry_at = 0, None
+        t.note("отклонено" + (f": {reason}" if reason else ""))
         self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         return True
@@ -146,6 +198,7 @@ class Office:
         t = self.store.get(task_id)
         if not t or t.status not in ("rejected", "failed"):
             return False
+        self.cancel_auto_retry(task_id)
         prev = await worktree.keep_previous(t.repo, t.branch, t.worktree)
         if prev and t.diff_stat:
             base = await worktree.default_branch(t.repo)
@@ -157,6 +210,7 @@ class Office:
             t.prompt += f"\n\nУточнение от ревьюера: {extra}"
         t.status, t.branch, t.worktree, t.result, t.diff_stat = "todo", None, None, None, None
         t.behind_main, t.overlap_files = 0, []
+        t.error, t.auto_retry_at = None, None   # auto_retries не сбрасываем — это счётчик подряд идущих сбоев API
         t.note("отправлена заново"); self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         self.kick(t.agent)

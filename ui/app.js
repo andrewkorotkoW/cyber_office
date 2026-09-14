@@ -21,6 +21,8 @@ function md(text) {
   return h.split(/\n{2,}/).map(p => p.startsWith('<') ? p : `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 }
 const summary = (text, n = 150) => { const t = String(text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n).trim() + '…' : t; };
+const MAX_AUTO_RETRIES = 3;
+const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } };
 const costLabel = (usd) => usd ? ` · ≈$${usd.toFixed(2)} по API` : '';
 const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n }).title.split('·')[0].trim();
 
@@ -74,6 +76,8 @@ function renderBoard() {
         ${t.status === 'review' && t.overlap_files && t.overlap_files.length ? `<div class="dep">⚠️ отстала от main на ${t.behind_main}, пересекается: ${esc(t.overlap_files.slice(0, 3).join(', '))}</div>` : (t.status === 'review' && t.behind_main ? `<div class="m">↻ main ушёл вперёд на ${t.behind_main}, файлы не пересекаются</div>` : '')}
         ${t.result && t.status !== 'todo' ? `<div class="res">💬 ${esc(summary(t.result))}</div>` : ''}
         ${t.diff_stat && t.status === 'review' ? `<div class="m">${esc(t.diff_stat.trim().split('\n').pop())}</div>` : ''}
+        ${t.status === 'failed' && t.error ? `<div class="dep">⚠️ ${esc(summary(t.error, 200))}</div>` : ''}
+        ${t.status === 'failed' && t.auto_retry_at ? `<div class="m">🔁 автоповтор ${t.auto_retries}/${MAX_AUTO_RETRIES} в ${fmtTime(t.auto_retry_at)}</div>` : ''}
         ${t.status === 'review' ? `<div class="actions"><button class="small ok" data-act="approve">Одобрить</button><button class="small" data-act="reject">Отклонить</button></div>` : ''}
         ${(t.status === 'rejected' || t.status === 'failed') ? `<div class="actions"><button class="small" data-act="retry">Повторить</button><button class="small" data-act="delete">Удалить</button></div>` : ''}
         ${t.status === 'done' ? `<div class="actions"><button class="small" data-act="delete">Убрать</button></div>` : ''}`;
@@ -109,6 +113,8 @@ async function openTask(id) {
   const body = $('#t-body');
   body.innerHTML = `<span class="tag">${esc(agentTitle(t.agent))}</span><span class="tag">${STATUS_RU[t.status]}</span><span class="tag">${esc(t.repo)}</span>${t.branch ? `<span class="tag">${esc(t.branch)}</span>` : ''}
     <label>Описание</label><div class="log" style="color:#d7dce3">${esc(t.prompt)}</div>
+    ${t.status === 'failed' && t.error ? `<label>Причина</label><div class="log">⚠️ ${esc(t.error)}</div>` : ''}
+    ${t.status === 'failed' && t.auto_retry_at ? `<div class="log">🔁 автоповтор ${t.auto_retries}/${MAX_AUTO_RETRIES} в ${fmtTime(t.auto_retry_at)}</div>` : ''}
     ${t.result ? `<label>Ответ агента</label><div class="answer">${md(t.result)}</div>` : ''}
     ${t.cost_usd ? `<div class="log">Расход: ≈$${t.cost_usd.toFixed(2)} по тарифу API · ${t.turns} ходов · подписка Max, деньги не списываются</div>` : ''}
     ${t.diff_stat ? `<label>Изменения</label><div class="log">${esc(t.diff_stat)}</div>` : ''}
