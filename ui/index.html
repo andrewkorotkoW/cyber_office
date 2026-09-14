@@ -66,6 +66,17 @@
   </div></section>
 </main>
 
+<dialog id="dlg-ask" class="ask">
+  <div class="ask-body">
+    <img class="ask-avatar" src="ui/assets/portraits/pink.png" alt="Пэм">
+    <div class="ask-text">
+      <div class="ask-who">Пэм</div>
+      <div class="ask-msg" id="ask-msg"></div>
+      <input id="ask-input" placeholder="">
+      <div class="ask-btns"><button id="ask-cancel">Отмена</button><button class="primary" id="ask-ok">OK</button></div>
+    </div>
+  </div>
+</dialog>
 <dialog id="dlg-new">
   <div class="head"><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content">

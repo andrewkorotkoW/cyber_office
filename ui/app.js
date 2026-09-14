@@ -28,6 +28,26 @@ const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n })
 // круглый аватар-портрет агента (лента событий, карточки задач, шапка миссии) — пусто, если у агента нет avatar
 const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name === n); return a && a.avatar ? `<img class="avatar" width="${size}" height="${size}" src="/ui/assets/portraits/${esc(a.avatar)}" alt="">` : ''; };
 
+
+// Свой диалог вместо системных prompt/confirm/alert (у системных — чужой шрифт и питоновская ракета).
+function uiAsk(message, { input = false, placeholder = '', ok = 'OK', cancel = 'Отмена', cancelable = true } = {}) {
+  return new Promise((resolve) => {
+    const d = document.getElementById('dlg-ask'); if (!d || !d.showModal) { resolve(input ? prompt(message) : confirm(message)); return; }
+    const msg = d.querySelector('#ask-msg'), inp = d.querySelector('#ask-input'), bOk = d.querySelector('#ask-ok'), bCancel = d.querySelector('#ask-cancel');
+    msg.textContent = message; inp.hidden = !input; inp.value = ''; inp.placeholder = placeholder; bOk.textContent = ok; bCancel.textContent = cancel; bCancel.hidden = !cancelable;
+    const done = (v) => { d.close(); bOk.onclick = bCancel.onclick = null; inp.onkeydown = null; d.oncancel = null; resolve(v); };
+    bOk.onclick = () => done(input ? inp.value : true);
+    bCancel.onclick = () => done(input ? null : false);
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); bOk.click(); } };
+    d.oncancel = (e) => { e.preventDefault(); done(input ? null : false); };
+    d.showModal(); if (input) inp.focus(); else bOk.focus();
+  });
+}
+const uiPrompt = (message, placeholder = '') => uiAsk(message, { input: true, placeholder });
+const uiConfirm = (message) => uiAsk(message, { ok: 'Да', cancel: 'Нет' });
+const uiAlert = (message) => uiAsk(message, { ok: 'Понятно', cancelable: false });
+window.alert = (m) => { uiAlert(String(m)); };
+
 async function loadState() {
   STATE = await api('/api/state');
   Floor.setAgents(STATE.agents.map(a => ({ ...a })));
@@ -56,7 +76,7 @@ function renderMissions() {
       <div class="s">${MISSION_RU[m.status] || m.status}${m.summary ? ' · ' + esc(m.summary) : ''}${m.error ? ' · ' + esc(m.error) : ''} · ${done}/${ts.length}${m.cost_usd ? ' · $' + m.cost_usd.toFixed(2) : ''}
         <button class="small" style="float:right" data-del="${m.id}">✕</button></div>
       <div class="bar"><i style="width:${ts.length ? Math.round(done / ts.length * 100) : 0}%"></i></div>`;
-    d.querySelector('[data-del]').addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Удалить миссию и все её задачи?')) return; try { await api(`/api/missions/${m.id}`, 'DELETE'); await loadState(); } catch (err) { alert(err.message); } });
+    d.querySelector('[data-del]').addEventListener('click', async (e) => { e.stopPropagation(); if (!(await uiConfirm('Удалить миссию и все её задачи?'))) return; try { await api(`/api/missions/${m.id}`, 'DELETE'); await loadState(); } catch (err) { alert(err.message); } });
     box.appendChild(d);
   }
 }
@@ -93,8 +113,8 @@ function renderBoard() {
 async function action(t, act) {
   try {
     if (act === 'approve') { await api(`/api/tasks/${t.id}/approve`, 'POST'); }
-    if (act === 'reject') { const text = prompt('Почему отклоняешь? (пойдёт агенту при повторе)') ?? ''; await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
-    if (act === 'retry') { const text = prompt('Уточнение для агента (можно пусто)') ?? ''; await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
+    if (act === 'reject') { const text = (await uiPrompt('Почему отклоняешь? (пойдёт агенту при повторе)')) ?? ''; await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
+    if (act === 'retry') { const text = (await uiPrompt('Уточнение для агента (можно пусто)')) ?? ''; await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
     if (act === 'delete') { await api(`/api/tasks/${t.id}`, 'DELETE'); }
     await loadState(); $('#dlg-task').close();
   } catch (e) { alert(e.message); }
@@ -177,7 +197,7 @@ $('#m-submit').addEventListener('click', async () => {
   } catch (e) { alert(e.message); }
 });
 $('#btn-repo').addEventListener('click', async () => {
-  const path = prompt('Путь к git-репозиторию (например ~/PycharmProjects/bike_fit)'); if (!path) return;
+  const path = await uiPrompt('Путь к git-репозиторию', '~/PycharmProjects/bike_fit'); if (!path) return;
   try { await api('/api/repos', 'POST', { path }); await loadState(); } catch (e) { alert(e.message); }
 });
 

@@ -148,3 +148,14 @@ pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff
 .tabs { float:right; display:flex; gap:4px }
 .tabs button { padding:2px 8px; font-size:11px; box-shadow:2px 2px 0 var(--line) }
 .tabs button.on { background:var(--accent); border-color:var(--accent); color:var(--bg) }
+
+/* свой диалог вместо системного prompt/confirm/alert: пиксельный шрифт, портрет Пэм */
+dialog.ask { width:min(520px,92vw) }
+dialog.ask .ask-body { display:flex; gap:16px; padding:18px 18px 14px; align-items:flex-start }
+dialog.ask .ask-avatar { width:96px; height:96px; image-rendering:pixelated; border:3px solid #ff4fa3; box-shadow:0 0 10px #ff4fa3aa; flex:none }
+dialog.ask .ask-text { flex:1; min-width:0 }
+dialog.ask .ask-who { color:#ff4fa3; font-size:12px; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px; text-shadow:0 0 6px #ff4fa3aa }
+dialog.ask .ask-msg { font-size:14px; line-height:1.45; margin-bottom:10px; white-space:pre-wrap }
+dialog.ask input { width:100%; box-sizing:border-box; margin-bottom:12px }
+dialog.ask input[hidden] { display:none }
+dialog.ask .ask-btns { display:flex; gap:8px; justify-content:flex-end }
