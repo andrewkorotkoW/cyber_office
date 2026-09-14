@@ -54,7 +54,7 @@ async function loadState() {
   const m = $('#mode'); m.textContent = STATE.mode === 'fake' ? 'режим: имитация агентов' : 'режим: Claude Code';
   m.className = 'mode' + (STATE.mode === 'fake' ? ' fake' : '');
   updateModeBusy();
-  renderRepoTabs(); renderMissions(); renderBoard(); fillForm(); renderTestsRepoTabs();
+  renderRepoTabs(); renderMissions(); renderBoard(); fillForm(); syncAgentAvatar(); renderTestsRepoTabs();
 }
 
 function renderRepoTabs() {
@@ -182,7 +182,7 @@ function fillForm() {
   if (REPO_FILTER) { $('#f-repo').value = REPO_FILTER; $('#m-repo').value = REPO_FILTER; }
 }
 
-$('#btn-new').addEventListener('click', () => $('#dlg-new').showModal());
+$('#btn-new').addEventListener('click', () => { $('#dlg-new').showModal(); syncAgentAvatar(); });
 $('#f-submit').addEventListener('click', async () => {
   try {
     await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo: $('#f-repo').value, agent: $('#f-agent').value });
@@ -572,3 +572,11 @@ function updateModeBusy() {
   const n = (STATE.agents || []).filter(a => a.state && a.state !== 'idle').length;
   m.title = busy ? `работают: ${n}` : 'все свободны';
 }
+
+// Аватар выбранного агента в окне новой задачи.
+function syncAgentAvatar() {
+  const sel = document.getElementById('f-agent'), img = document.getElementById('f-agent-avatar'); if (!sel || !img) return;
+  const a = (STATE.agents || []).find(x => x.name === sel.value);
+  if (a && a.avatar) { img.src = '/ui/assets/portraits/' + a.avatar; img.hidden = false; } else img.hidden = true;
+}
+document.getElementById('f-agent')?.addEventListener('change', syncAgentAvatar);

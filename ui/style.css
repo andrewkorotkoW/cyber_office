@@ -159,3 +159,10 @@ dialog.ask .ask-msg { font-size:14px; line-height:1.45; margin-bottom:10px; whit
 dialog.ask input { width:100%; box-sizing:border-box; margin-bottom:12px }
 dialog.ask input[hidden] { display:none }
 dialog.ask .ask-btns { display:flex; gap:8px; justify-content:flex-end }
+
+/* портреты в окне новой задачи: киборг в шапке, аватар выбранного агента у селекта */
+dialog .head .head-avatar { width:56px; height:56px; image-rendering:pixelated; border:3px solid #ff9a3c; box-shadow:0 0 10px #ff9a3caa; flex:none }
+.agent-pick { display:flex; gap:8px; align-items:center }
+.agent-pick select { flex:1 }
+.pick-avatar { width:34px; height:34px; image-rendering:pixelated; border:2px solid var(--line); flex:none }
+dialog .head .head-avatar.lead { border-color:#4f8cff; box-shadow:0 0 10px #4f8cffaa }
