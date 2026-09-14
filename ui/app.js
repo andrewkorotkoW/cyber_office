@@ -88,6 +88,7 @@ function renderBoard() {
     const col = document.querySelector(`.col[data-col="${k}"]`);
     col.querySelectorAll('.card').forEach(e => e.remove());
     $(`#n-${k}`).textContent = list.length || '';
+    const tabN = document.getElementById(`tab-n-${k}`); if (tabN) tabN.textContent = list.length ? `(${list.length})` : '';
     list.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     for (const t of list) {
       const c = document.createElement('div'); c.className = 'card'; c.style.borderLeftColor = STATUS_COLOR[t.status];
@@ -144,7 +145,7 @@ async function openTask(id) {
     <div id="t-diff"></div>
     <label>Терминал агента ${t.status === 'running' ? '· live' : ''}</label><div class="term" id="t-term"></div>
     <label>Хроника</label><div class="log">${esc(t.log.join('\n'))}</div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end" id="t-actions"></div>`;
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end" id="t-actions"></div>`;
   const acts = $('#t-actions');
   if (t.status === 'review') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'reject')">Отклонить</button><button class="ok" onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'approve')">Одобрить и влить в main</button>`;
   if (t.status === 'rejected' || t.status === 'failed') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'retry')">Повторить с уточнением</button>`;
@@ -350,7 +351,7 @@ async function openRunDetail(run_id) {
     ${r.failed && r.failed.length ? `<label>Провалившиеся тесты</label><div class="log" style="color:var(--accent)">${esc(r.failed.join('\n'))}</div>` : ''}
     ${r.screenshot ? `<label>Скриншот падения</label><img class="screenshot" src="/api/scenarios/screenshot/${encodeURIComponent(r.id)}/${encodeURIComponent(r.screenshot)}">` : ''}
     <details ${r.status === 'failed' || r.status === 'error' ? 'open' : ''}><summary>Трейсбек / вывод (stdout/stderr)</summary><pre class="diff">${esc(out) || '(пусто)'}</pre></details>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="primary" id="run-retry">↻ Повторить</button></div>`;
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="primary" id="run-retry">↻ Повторить</button></div>`;
   $('#run-retry').addEventListener('click', async () => {
     $('#dlg-run').close();
     if (r.repo !== TESTS_REPO) { TESTS_REPO = r.repo; try { localStorage.setItem('ao_tests_repo', r.repo); } catch (e) {} renderTestsRepoTabs(); loadTestsTree(); updateScenariosPanel(); }
@@ -582,3 +583,33 @@ function syncAgentAvatar() {
   if (a && a.avatar) { img.src = '/ui/assets/portraits/' + a.avatar; img.hidden = false; } else img.hidden = true;
 }
 document.getElementById('f-agent')?.addEventListener('change', syncAgentAvatar);
+
+// ---- мобильная раскладка (<=768px): бургер-меню, вкладки доски, сворачивание сцены офиса
+(function () {
+  const btnMenu = document.getElementById('btn-menu');
+  const headerMenu = document.getElementById('header-menu');
+  if (btnMenu && headerMenu) {
+    btnMenu.addEventListener('click', () => {
+      const open = headerMenu.classList.toggle('open');
+      btnMenu.setAttribute('aria-expanded', String(open));
+    });
+    headerMenu.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON') { headerMenu.classList.remove('open'); btnMenu.setAttribute('aria-expanded', 'false'); }
+    });
+  }
+
+  document.querySelectorAll('.board-tab').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.board-tab').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.col').forEach(c => c.classList.toggle('active', c.dataset.col === b.dataset.col));
+  }));
+
+  const btnFloorToggle = document.getElementById('btn-floor-toggle');
+  const floorPanel = document.getElementById('floor');
+  if (btnFloorToggle && floorPanel) {
+    btnFloorToggle.addEventListener('click', () => {
+      const expanded = floorPanel.classList.toggle('expanded');
+      btnFloorToggle.textContent = expanded ? '▲ свернуть офис' : '▼ показать офис';
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+})();
