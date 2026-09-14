@@ -1,0 +1,77 @@
+"""Смоук-тест чистых функций ui/floor.js через node (без DOM) — тот же module.exports, что
+экспортирует floor.js для тестов dwight'а. Требует node на PATH (есть в окружении разработки)."""
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+FLOOR_JS = Path(__file__).resolve().parent.parent / "ui" / "floor.js"
+
+pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node недоступен")
+
+
+def _run_node(js: str):
+    proc = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_desk_positions_still_work():
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify({{
+          desk: F.deskX(0, 3),
+          positions: F.computeDeskPositions(3, []).length,
+        }}));
+    """)
+    assert out["desk"] > 0
+    assert out["positions"] == 3
+
+
+def test_named_agents_get_their_own_character():
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify({{
+          michael: F.characterFor('michael'),
+          dwight: F.characterFor('dwight'),
+          pam: F.characterFor('pam'),
+          unknown: F.characterFor('someone_else'),
+        }}));
+    """)
+    assert out == {"michael": "michael", "dwight": "dwight", "pam": "pam", "unknown": None}
+
+
+def test_char_heads_are_distinct_and_well_formed():
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const heads = {{}};
+        for (const name of ['michael', 'dwight', 'pam']) {{
+          const rows = F.CHAR_HEADS[name];
+          heads[name] = {{ rowCount: rows.length, widths: [...new Set(rows.map(r => r.length))], joined: rows.join('|') }};
+        }}
+        console.log(JSON.stringify(heads));
+    """)
+    for name in ("michael", "dwight", "pam"):
+        assert out[name]["rowCount"] == 8
+        assert out[name]["widths"] == [16]     # каждая строка спрайта ровно 16 «пикселей» — без этого рисунок рассыпается
+    # три силуэта не совпадают (иначе разные образы выглядели бы одинаково)
+    assert len({out[n]["joined"] for n in ("michael", "dwight", "pam")}) == 3
+
+
+def test_named_agent_poses_match_generic_layout_size():
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const sizes = {{}};
+        for (const name of ['michael', 'dwight', 'pam']) {{
+          sizes[name] = {{}};
+          for (const pose of ['stand', 'walk1', 'walk2', 'type1', 'type2']) {{
+            sizes[name][pose] = F.humanRows(pose, F.CHAR_HEADS[name]).length;
+          }}
+        }}
+        console.log(JSON.stringify(sizes));
+    """)
+    for name in ("michael", "dwight", "pam"):
+        for pose in ("stand", "walk1", "walk2", "type1", "type2"):
+            assert out[name][pose] == 26   # 8 (голова) + 8 (торс) + 10 (ноги) — как у прежнего генератора людей

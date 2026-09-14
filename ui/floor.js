@@ -41,6 +41,50 @@
     rb(['.', 4], ['s', 3], ['d', 2], ['s', 3], ['.', 4]), // рот
     rb(['.', 5], ['s', 6], ['.', 5]), // шея
   ];
+
+  // ---------------------------------------------------------------- именные персонажи (michael/dwight/pam)
+  // три агента получают собственный силуэт/палитру вместо процедурной причёски — по описаниям cyberpunk-портретов
+  // (ui/assets/portraits/*.png). Для незнакомых имён используется прежний генератор (HAIRSTYLES/FACE_ROWS выше).
+  const CHAR_PALETTE = {
+    michael: { skin: P.s, hair: '#2e2013', eye: '#4fa8ff', jacket: '#1d3a66', neon: '#7ec8ff' },
+    dwight: { skin: '#dfe4ec', hair: '#dfe4ec', eye: '#ffd23f', jacket: '#c9cfd8', neon: '#3fe0c8', emblem: '#f2c14e' },
+    pam: { skin: P.s, hair: '#ff4fa3', eye: '#3fe0c8', jacket: '#15161d', neon: '#3fe0c8', shoulder: '#ff4fa3' },
+  };
+  const CHAR_HAIRSTYLES = {
+    michael: [ // длинные тёмно-каштановые волосы, зачёсаны назад — закрывают весь верх головы
+      rb(['.', 1], ['h', 14], ['.', 1]),
+      rb(['h', 16]),
+      rb(['h', 16]),
+    ],
+    dwight: [ // лысый — силуэт скальпа залит цветом кожи (CHAR_PALETTE.dwight.hair === .skin), имплант рисуется поверх отдельно
+      rb(['.', 5], ['h', 6], ['.', 5]),
+      rb(['.', 3], ['h', 10], ['.', 3]),
+      rb(['.', 2], ['h', 12], ['.', 2]),
+    ],
+    pam: [ // розовый ирокез, правый висок выбрит (полоска кожи 's' вместо волос)
+      rb(['.', 3], ['h', 8], ['.', 5]),
+      rb(['.', 2], ['h', 9], ['s', 1], ['.', 4]),
+      rb(['.', 1], ['h', 10], ['s', 2], ['.', 3]),
+    ],
+  };
+  // общие лицевые ряды для именных персонажей — глаза получают отдельный цветовой код 'z' (голубой/жёлтый/бирюзовый),
+  // а не общий 'd' (тёмный — им остаются только рот и обувь)
+  const CHAR_FACE_ROWS = FACE_ROWS.map((row, idx) => idx === 1
+    ? rb(['.', 1], ['h', 2], ['.', 1], ['s', 2], ['z', 1], ['s', 2], ['z', 1], ['s', 2], ['.', 1], ['h', 2], ['.', 1])
+    : row);
+  // борода Майкла — щёки/подбородок перекрашены в цвет волос (код h), рот остаётся тёмным по центру
+  const MICHAEL_FACE_ROWS = [
+    CHAR_FACE_ROWS[0], CHAR_FACE_ROWS[1],
+    rb(['.', 2], ['h', 1], ['.', 1], ['h', 2], ['s', 4], ['h', 2], ['.', 1], ['h', 1], ['.', 2]),
+    rb(['.', 4], ['h', 3], ['d', 2], ['h', 3], ['.', 4]),
+    rb(['.', 4], ['h', 2], ['s', 4], ['h', 2], ['.', 4]),
+  ];
+  const CHAR_HEADS = {
+    michael: CHAR_HAIRSTYLES.michael.concat(MICHAEL_FACE_ROWS),
+    dwight: CHAR_HAIRSTYLES.dwight.concat(CHAR_FACE_ROWS),
+    pam: CHAR_HAIRSTYLES.pam.concat(CHAR_FACE_ROWS),
+  };
+  function characterFor(name) { return Object.prototype.hasOwnProperty.call(CHAR_PALETTE, name) ? name : null; }
   // торс: f — рубашка (цвет агента), e — рукав (темнее), s — кисти рук
   const TORSO_ARM_GAP = rb(['e', 3], ['.', 1], ['f', 8], ['.', 1], ['e', 3]);
   const TORSO = [
@@ -59,8 +103,7 @@
   const LEGS_WALK1 = LEGS_BODY.concat([rb(['d', 4], ['.', 8], ['d', 4]), rb(['d', 4], ['.', 8], ['d', 4])]);
   const LEGS_WALK2 = LEGS_BODY.concat([rb(['.', 2], ['d', 12], ['.', 2]), rb(['.', 2], ['d', 12], ['.', 2])]);
 
-  function humanRows(pose, style) {
-    const head = HAIRSTYLES[style].concat(FACE_ROWS);
+  function humanRows(pose, head) {
     if (pose === 'walk1') return head.concat(TORSO, LEGS_WALK1);
     if (pose === 'walk2') return head.concat(TORSO, LEGS_WALK2);
     if (pose === 'type1') return head.concat(TORSO_TYPE1, LEGS_STAND);
@@ -632,25 +675,69 @@
     drawActors(t);
   }
 
+  // именные акценты поверх спрайта (волосы на плечах, имплант, led-полосы, наплечник, неоновые воротники) —
+  // неон мигает синусоидой по t, тем же приёмом, что и неоновый кант колонны в cyberpunk-сцене
+  function drawCharAccents(name, x, y, t, pal) {
+    if (name === 'michael') {
+      o.fillStyle = pal.hair; // длинные волосы спадают на плечи — по краям воротника
+      const l = pixelBox(0, 8, HS), r = pixelBox(15, 8, HS);
+      o.fillRect(x + l.x, y + l.y, l.w, l.h * 2);
+      o.fillRect(x + r.x, y + r.y, r.w, r.h * 2);
+      const glow = 0.55 + 0.45 * Math.sin(t / 500); // светящийся голубой воротник куртки
+      const c1 = pixelBox(3, 8, HS), c2 = pixelBox(12, 8, HS);
+      o.globalAlpha = glow; o.fillStyle = pal.neon;
+      o.fillRect(x + c1.x, y + c1.y, (c2.x + c2.w) - c1.x, c1.h);
+      o.globalAlpha = 1;
+    } else if (name === 'dwight') {
+      const earGlow = 0.5 + 0.5 * Math.sin(t / 380 + 0.7); // хромированный модуль-наушник на виске
+      const ear = pixelBox(3, 1, HS);
+      o.globalAlpha = earGlow; o.fillStyle = pal.neon; o.fillRect(x + ear.x, y + ear.y, S(2), S(2)); o.globalAlpha = 1;
+      const p1 = 0.5 + 0.5 * Math.sin(t / 420), p2 = 0.5 + 0.5 * Math.sin(t / 420 + 1.6); // led-полосы на броне
+      const l1 = pixelBox(4, 10, HS), l2 = pixelBox(9, 10, HS);
+      o.globalAlpha = p1; o.fillStyle = '#ff9a3c'; o.fillRect(x + l1.x, y + l1.y, S(2), l1.h);
+      o.globalAlpha = p2; o.fillStyle = '#ff4fa3'; o.fillRect(x + l2.x, y + l2.y, S(2), l2.h);
+      o.globalAlpha = 1;
+      const em = pixelBox(7, 9, HS); o.fillStyle = pal.emblem; o.fillRect(x + em.x, y + em.y, S(2), S(2)); // жёлтая эмблема
+    } else if (name === 'pam') {
+      const sh = pixelBox(11, 8, HS); o.fillStyle = pal.shoulder; o.fillRect(x + sh.x, y + sh.y, S(3), S(3)); // розовый наплечник
+      const glow = 0.55 + 0.45 * Math.sin(t / 480); // бирюзовый неон-воротник
+      const c1 = pixelBox(4, 8, HS), c2 = pixelBox(11, 8, HS);
+      o.globalAlpha = glow; o.fillStyle = pal.neon;
+      o.fillRect(x + c1.x, y + c1.y, (c2.x + c2.w) - c1.x, c1.h);
+      o.globalAlpha = 1;
+      const er = pixelBox(2, 5, HS); o.fillStyle = pal.neon; o.fillRect(x + er.x, y + er.y, S(1), S(1)); // серьга
+    }
+  }
+
   function drawHuman(a, t) {
     const i = agents.indexOf(a);
-    const style = i % HAIRSTYLES.length, hair = HAIR_COLORS[i % HAIR_COLORS.length];
-    const colors = { f: a.color, e: shade(a.color, 0.72), h: hair, s: P.s, d: P.d, k: P.k };
+    const pal = CHAR_PALETTE[a.name];
+    const head = pal ? CHAR_HEADS[a.name] : HAIRSTYLES[i % HAIRSTYLES.length].concat(FACE_ROWS);
+    const colors = pal
+      ? { f: pal.jacket, e: shade(pal.jacket, 0.78), h: pal.hair, s: pal.skin, d: P.d, k: P.k, z: pal.eye }
+      : { f: a.color, e: shade(a.color, 0.72), h: HAIR_COLORS[i % HAIR_COLORS.length], s: P.s, d: P.d, k: P.k };
     let pose = 'stand';
     if (a.walking) pose = Math.floor(t / 140) % 2 ? 'walk1' : 'walk2';
     else if (a.state === 'working' && !a.queue.length) pose = Math.floor(t / 160) % 2 ? 'type1' : 'type2';
-    const rows = humanRows(pose, style);
+    const rows = humanRows(pose, head);
     const { w, h } = spriteSize(rows, HS);
     const x = Math.round(a.x) - Math.round(w / 2), y = Math.round(a.y) - h - S(8);
     // тень
     o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + S(3), y + S(25), S(10), S(2));
-    if (a.dir === -1) { o.save(); o.translate(x * 2 + S(15), 0); o.scale(-1, 1); sprite(rows, x, y, colors, HS); o.restore(); }
-    else sprite(rows, x, y, colors, HS);
+    if (a.dir === -1) {
+      o.save(); o.translate(x * 2 + S(15), 0); o.scale(-1, 1);
+      sprite(rows, x, y, colors, HS);
+      if (pal) drawCharAccents(a.name, x, y, t, pal);
+      o.restore();
+    } else {
+      sprite(rows, x, y, colors, HS);
+      if (pal) drawCharAccents(a.name, x, y, t, pal);
+    }
     if (a.carry === 'env') sprite(ENVELOPE, x + (a.dir === -1 ? -S(12) : S(16)), y + S(14), null, HS);
-    if (a.state === 'review' && !a.queue.length) sprite(ARM_DOC, x + (a.dir === -1 ? -S(6) : S(15)), y - S(2), { f: a.color, s: P.s }, HS);
+    if (a.state === 'review' && !a.queue.length) sprite(ARM_DOC, x + (a.dir === -1 ? -S(6) : S(15)), y - S(2), { f: a.color, s: colors.s }, HS);
     if (a.state === 'idle' && !a.walking && Math.floor(t / 2800) % 4 === 0 && (t % 2800) < 120) {
-      // моргание — закрываем глаза цветом кожи, позиция глаз считается через тот же масштаб, что и весь спрайт
-      o.fillStyle = P.s;
+      // моргание — закрываем глаза цветом кожи персонажа, позиция глаз считается через тот же масштаб, что и весь спрайт
+      o.fillStyle = colors.s;
       const eye1 = pixelBox(6, 4, HS), eye2 = pixelBox(9, 4, HS);
       o.fillRect(x + eye1.x, y + eye1.y, eye1.w, eye1.h);
       o.fillRect(x + eye2.x, y + eye2.y, eye2.w, eye2.h);
@@ -700,6 +787,9 @@
   // экспорт чистых функций для тестов в node (dwight) — безопасен для браузера: typeof module там undefined,
   // так что этот блок в браузере не выполняется и window.Floor не затрагивает
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS };
+    module.exports = {
+      LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS,
+      characterFor, CHAR_PALETTE, CHAR_HEADS, humanRows,
+    };
   }
 })();
