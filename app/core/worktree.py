@@ -80,7 +80,7 @@ async def _link_env(repo: Path, worktree: Path) -> None:
 async def commit_all(worktree: str, message: str) -> bool:
     """Коммитит всё, что агент оставил незакоммиченным. False — нечего коммитить."""
     await _git(worktree, "add", "-A")
-    code, out = await _git(worktree, "-c", "user.name=agent_office", "-c", "user.email=agent@office.local",
+    code, out = await _git(worktree, "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
                            "commit", "-q", "-m", message)
     return code == 0
 
@@ -103,7 +103,7 @@ async def merge(repo: str, branch: str, message: str) -> tuple[bool, str]:
     code, out = await _git(repo, "checkout", "-q", base)
     if code != 0:
         return False, out
-    code, out = await _git(repo, "-c", "user.name=agent_office", "-c", "user.email=agent@office.local",
+    code, out = await _git(repo, "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
                            "merge", "--no-ff", "-q", "-m", message, branch)
     if code != 0:
         await _git(repo, "merge", "--abort")

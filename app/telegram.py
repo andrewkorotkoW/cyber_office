@@ -28,7 +28,7 @@ from app import config
 from app.core.events import Event, bus
 from app.core.office import Office
 
-log = logging.getLogger("agent_office.telegram")
+log = logging.getLogger("cyber_office.telegram")
 router = Router(name="tg")
 
 import json
@@ -127,7 +127,7 @@ async def start(message: Message) -> None:
         await message.answer(f"Этот офис не твой. Твой id: <code>{uid}</code>", parse_mode="HTML")
         return
     await message.answer(
-        "🐒 <b>agent_office</b> на связи.\n\n"
+        "<b>cyber_office</b> на связи.\n\n"
         "• любой текст — задача Майклу в текущий репозиторий\n"
         "• <code>@dwight текст</code> / <code>@pam текст</code> — другому агенту\n"
         "• /repo — выбрать репозиторий\n"

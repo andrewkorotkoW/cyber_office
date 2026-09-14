@@ -1,4 +1,4 @@
-"""Окно macOS для agent_office: сервер FastAPI в фоновом потоке + WKWebView с интерфейсом.
+"""Окно macOS для cyber_office: сервер FastAPI в фоновом потоке + WKWebView с интерфейсом.
 
     .venv/bin/python -m app.desktop            # реальные агенты
     AO_FAKE=1 .venv/bin/python -m app.desktop  # имитация
@@ -20,7 +20,7 @@ import webview
 from app import config
 from app.main import acquire_lock, app as fastapi_app
 
-log = logging.getLogger("agent_office.desktop")
+log = logging.getLogger("cyber_office.desktop")
 ICON = config.ROOT / "assets" / "icon.png"
 
 

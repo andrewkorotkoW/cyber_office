@@ -1,4 +1,4 @@
-/* agent_office — пиксельный стиль. Три темы через CSS-переменные, переключатель в шапке. */
+/* cyber_office — пиксельный стиль. Три темы через CSS-переменные, переключатель в шапке. */
 :root, [data-theme="arcade"] {
   --bg:#0b0616; --grid:#1a1030; --panel:#160c2a; --line:#4b2a7a; --text:#f3e9ff; --mute:#a78bd6;
   --accent:#ff3f8f; --ok:#ffe135; --blue:#37d0ff; --warn:#ffb020; --shadow:#ff3f8f; --card:#1e1140;

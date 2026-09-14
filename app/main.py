@@ -1,4 +1,4 @@
-"""agent_office — локальный «офис» агентов Claude Code.
+"""cyber_office — локальный «офис» агентов Claude Code.
 
     python -m app.main            # реальные агенты (нужен залогиненный claude)
     AO_FAKE=1 python -m app.main  # имитация агентов, чтобы смотреть интерфейс
@@ -27,13 +27,13 @@ from app.core.runner import ClaudeRunner, FakeRunner
 from app.core.tasks import TaskStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-log = logging.getLogger("agent_office")
+log = logging.getLogger("cyber_office")
 
 FAKE = os.getenv("AO_FAKE") == "1"
 UI_DIR = config.ROOT / "ui"
 REPOS_FILE = config.WORKSPACE / "repos.json"
 
-app = FastAPI(title="agent_office")
+app = FastAPI(title="cyber_office")
 config.ensure_dirs()
 
 
@@ -50,7 +50,7 @@ def acquire_lock() -> None:
     try:
         fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        raise SystemExit(f"agent_office уже запущен на этом workspace ({config.WORKSPACE}). "
+        raise SystemExit(f"cyber_office уже запущен на этом workspace ({config.WORKSPACE}). "
                          f"Открой http://{config.HOST}:{config.PORT} или останови тот процесс.")
     _lock_fh.write(str(os.getpid())); _lock_fh.flush()
     (config.WORKSPACE / "server.pid").write_text(str(os.getpid()))   # его читает подсказка after_merge
@@ -422,7 +422,7 @@ async def _start_telegram() -> None:
 
 def main() -> None:
     acquire_lock()
-    log.info("agent_office: режим %s, claude=%s", "имитация" if FAKE else "claude", config.CLAUDE_BIN)
+    log.info("cyber_office: режим %s, claude=%s", "имитация" if FAKE else "claude", config.CLAUDE_BIN)
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning")
 
 

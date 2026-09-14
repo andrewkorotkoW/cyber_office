@@ -2,7 +2,7 @@
 pytest-файлы в workspace/tests/bike_fit/scenarios, запуск через testlab.run (та же лента
 и история прогонов, что у обычных тестов) со скриншотом падения.
 
-bike_fit — Streamlit-приложение без .venv-специфики самого agent_office: сценарии
+bike_fit — Streamlit-приложение без .venv-специфики самого cyber_office: сценарии
 работают через .venv репозитория bike_fit (там должны быть поставлены pytest-playwright
 и `playwright install chromium` — руками, один раз, это не задача этого модуля)."""
 from __future__ import annotations
