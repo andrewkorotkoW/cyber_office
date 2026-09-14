@@ -117,47 +117,36 @@ def test_cyberpunk_desk_positions_within_canvas(probe_data, n):
         assert box["y"] + box["h"] <= lh, f"n={n} стол {pos} выходит за нижний край канвы"
 
 
-# Известный дефект (см. резюме задачи): полосы CYBER_DESK_BANDS.single/row1 имеют x0=230/x1=538
-# и y=372/350 соответственно, а кресла-препятствия занимают x:[110,210]/[558,658], y:[300,390].
-# Стол, чей home.x попадает на край полосы (230 или 538), высовывается своим bounding box'ом
-# (±42 по x от home) на 20px внутрь ближайшего кресла — pointOutsideObstacles() двигает наружу
-# только центр стола (точку home), а не весь прямоугольник стола, поэтому проверка препятствий
-# не замечает такое пересечение.
-KNOWN_DESK_OBSTACLE_OVERLAPS = {
-    (2, 0), (2, 1),
-    (3, 0), (3, 2),
-    (4, 0), (4, 1),
-    (5, 0), (5, 2),
-    (6, 0), (6, 2),
-}
+# Раньше здесь была регрессионная фиксация известного бага: полосы CYBER_DESK_BANDS.single/row1
+# (x0=230/x1=538, y=372/350) сталкивались с креслами-препятствиями (x:[110,210]/[558,658], y:[300,390]) —
+# pointOutsideObstacles() отталкивал только точку home, а не весь bounding box стола (±42 по x, -12/+3 по y),
+# из-за чего стол на краю полосы мог «повиснуть» над креслом. computeDeskPositions() теперь проверяет
+# препятствия по раздутому (Минковским) прямоугольнику — под сам bounding box стола, а не только его центр —
+# так что пересечений с sceneObstacleRects() для n=1..6 больше нет ни для одного стола.
 
 
 @pytest.mark.parametrize("n", range(1, 7))
 def test_cyberpunk_desk_positions_avoid_obstacles(probe_data, n):
-    """Столы, не задетые известным дефектом полос, не должны пересекать препятствия."""
     positions = probe_data["cyberDesks"][str(n)]
     rects = probe_data["obstacleRects"]
-    bad_indices = {idx for (nn, idx) in KNOWN_DESK_OBSTACLE_OVERLAPS if nn == n}
     for idx, pos in enumerate(positions):
-        if idx in bad_indices:
-            continue  # покрыто test_known_defect_desk_overlaps_armchair_at_band_edge
         box = desk_bbox(pos)
         hits = [r for r in rects if rects_overlap(box, r)]
         assert not hits, (
-            f"n={n} стол #{idx} ({pos}, bbox={box}) пересекает препятствие(-я) {hits} — "
-            f"новый, ранее не зафиксированный дефект расстановки столов"
+            f"n={n} стол #{idx} ({pos}, bbox={box}) пересекает препятствие(-я) {hits}"
         )
 
 
-@pytest.mark.parametrize("n,idx", sorted(KNOWN_DESK_OBSTACLE_OVERLAPS))
-def test_known_defect_desk_overlaps_armchair_at_band_edge(probe_data, n, idx):
-    """Регрессионная фиксация известного бага: если тест начал падать — баг починили,
-    удалите соответствующую пару из KNOWN_DESK_OBSTACLE_OVERLAPS и из этого теста."""
-    pos = probe_data["cyberDesks"][str(n)][idx]
-    rects = probe_data["obstacleRects"]
-    box = desk_bbox(pos)
-    hits = [r for r in rects if rects_overlap(box, r)]
-    assert hits, (
-        f"n={n} стол #{idx} ({pos}) больше не пересекает препятствия — похоже, дефект "
-        f"расстановки столов на краю полосы CYBER_DESK_BANDS починили"
-    )
+@pytest.mark.parametrize("n", range(1, 7))
+def test_cyberpunk_desk_positions_dont_overlap_each_other(probe_data, n):
+    """Соседние столы одного ряда (близкий y) должны стоять не ближе ширины DESK после масштабирования HS."""
+    positions = probe_data["cyberDesks"][str(n)]
+    min_gap = 2 * DESK_HALF_W
+    by_row = sorted(positions, key=lambda p: (p["y"], p["x"]))
+    rows = {}
+    for p in by_row:
+        rows.setdefault(p["y"], []).append(p["x"])
+    for y, xs in rows.items():
+        for i in range(1, len(xs)):
+            gap = xs[i] - xs[i - 1]
+            assert gap >= min_gap, f"n={n} столы в ряду y={y} стоят слишком близко: {xs}, gap={gap} < {min_gap}"
