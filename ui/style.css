@@ -17,6 +17,8 @@ body { margin:0; color:var(--text); font:14px/1.45 "Pixelify Sans", ui-monospace
 header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:3px solid var(--line); background:var(--panel) }
 header h1 { font-size:18px; margin:0; letter-spacing:1px; text-transform:uppercase; text-shadow:2px 2px 0 var(--shadow) }
 header h1.neon { color:#ff4fa3; letter-spacing:2px; text-shadow:0 0 4px #ff4fa3, 0 0 12px #ff4fa3, 0 0 24px #ff2d8a, 2px 2px 0 #3b0a26; animation:neon-flicker 4s infinite }
+header .team-strip { height:40px; width:auto; image-rendering:pixelated; border:2px solid var(--line); box-shadow:0 0 8px #ff4fa3aa; margin-left:6px; transition:transform .15s }
+header .team-strip:hover { transform:scale(3.2); transform-origin:left top; z-index:50; position:relative }
 @keyframes neon-flicker { 0%,93%,100% { opacity:1 } 94% { opacity:.75 } 96% { opacity:1 } 98% { opacity:.85 } }
 header .mode { font-size:12px; color:var(--mute); padding:3px 8px; border:2px solid var(--line) }
 header .mode.fake { color:var(--warn); border-color:var(--warn) }
