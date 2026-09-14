@@ -37,10 +37,41 @@ class RunResult:
     cost_usd: float = 0.0
     turns: int = 0
     error: str | None = None
+    exit_code: int | None = None        # код возврата процесса claude (ClaudeRunner)
+    is_error_result: bool = False       # claude сам прислал result с is_error=true (а не просто упал)
 
 
 class Runner(Protocol):
     async def run(self, agent: str, system: str, model: str, prompt: str, cwd: str, task_id: str) -> RunResult: ...
+
+
+# Признаки временного сбоя инфраструктуры Claude (не вина промпта/агента) — при них
+# есть смысл повторить попытку самим, а не сразу будить владельца.
+INFRA_MARKERS = (
+    "api error", "failed to authenticate", "rate limit", "overloaded",
+    "529", "503", "econnreset",
+)
+
+
+def infra_failure_reason(res: RunResult) -> str | None:
+    """Понятная причина, если провал похож на сбой API/сети, иначе None.
+
+    Кроме характерных фраз в тексте/ошибке, отдельно ловим случай, из-за которого
+    задача d0e75247 упала без error и без summary: claude завершился с ненулевым
+    кодом, так и не прислав финальный result (is_error) — процесс просто умер
+    посреди авторизации.
+    """
+    if res.ok:
+        return None
+    haystack = f"{res.error or ''}\n{res.text or ''}".lower()
+    matched = next((m for m in INFRA_MARKERS if m in haystack), None)
+    snippet = " ".join((res.text or res.error or "").split())[:300]
+    if matched:
+        return f"сбой API Claude ({matched}): {snippet}" if snippet else f"сбой API Claude ({matched})"
+    if res.exit_code not in (None, 0) and not res.is_error_result:
+        base = f"claude завершился с кодом {res.exit_code} без финального ответа — похоже на сбой инфраструктуры"
+        return f"{base}: {snippet}" if snippet else base
+    return None
 
 
 def _summarize_tool(name: str, inp: dict) -> str:
@@ -77,7 +108,7 @@ class ClaudeRunner:
         except FileNotFoundError:
             return RunResult(False, "", error=f"claude не найден: {self.binary}")
 
-        final = RunResult(False, "", error="агент завершился без результата")
+        final: RunResult | None = None
         text_parts: list[str] = []
         assert proc.stdout is not None
         async for raw in proc.stdout:
@@ -98,24 +129,45 @@ class ClaudeRunner:
                         await bus.emit("agent.tool", agent, task_id,
                                        tool=block.get("name"), summary=_summarize_tool(block.get("name", ""), block.get("input") or {}))
             elif t == "result":
-                ok = not msg.get("is_error") and msg.get("subtype") == "success"
+                is_error = bool(msg.get("is_error"))
+                ok = not is_error and msg.get("subtype") == "success"
                 final = RunResult(ok, msg.get("result") or "\n".join(text_parts[-3:]),
                                   float(msg.get("total_cost_usd") or 0), int(msg.get("num_turns") or 0),
-                                  None if ok else (msg.get("result") or msg.get("subtype") or "ошибка"))
+                                  None if ok else (msg.get("result") or msg.get("subtype") or "ошибка"),
+                                  is_error_result=is_error)
         stderr = (await proc.stderr.read()).decode("utf-8", errors="replace") if proc.stderr else ""
         await proc.wait()
+        if final is None:
+            # процесс завершился, ни разу не прислав result-событие (например, упал на
+            # авторизации раньше, чем модель успела дать финальный ответ) — не терять
+            # текст, который агент всё же вывел, иначе задача падает без error и без summary
+            final = RunResult(False, "\n".join(text_parts[-3:]), error="агент завершился без result-события")
+        final.exit_code = proc.returncode
         if proc.returncode != 0 and not final.ok:
             final.error = (final.error or "") + (f" | {stderr.strip()[-500:]}" if stderr.strip() else f" | exit {proc.returncode}")
         return final
 
 
 class FakeRunner:
-    """Имитация: пишет несколько событий, делает правку в worktree, отвечает резюме."""
+    """Имитация: пишет несколько событий, делает правку в worktree, отвечает резюме.
 
-    def __init__(self, delay: float = 0.05) -> None:
-        self.delay = delay
+    fail_times > 0 — для тестов автоповтора: первые N запусков на каждую задачу
+    имитируют сбой API (текст fail_text попадает и в agent.text, и в RunResult),
+    следующий запуск той же задачи — обычный успех.
+    """
+
+    def __init__(self, delay: float = 0.05, fail_times: int = 0,
+                 fail_text: str = "Failed to authenticate. API Error: 403 Request not allowed") -> None:
+        self.delay, self.fail_times, self.fail_text = delay, fail_times, fail_text
+        self._fails_left: dict[str, int] = {}
 
     async def run(self, agent: str, system: str, model: str, prompt: str, cwd: str, task_id: str) -> RunResult:
+        left = self._fails_left.get(task_id, self.fail_times)
+        if left > 0:
+            self._fails_left[task_id] = left - 1
+            await bus.emit("agent.text", agent, task_id, text=self.fail_text)
+            await asyncio.sleep(self.delay)
+            return RunResult(False, self.fail_text, error=self.fail_text)
         steps = [("Read", "README.md"), ("Grep", "TODO"), ("Edit", "README.md"), ("Bash", "$ pytest -q")]
         await bus.emit("agent.text", agent, task_id, text="Смотрю репозиторий и план задачи…")
         for tool, summary in steps:

@@ -44,6 +44,7 @@ class Task:
     branch: str | None = None
     worktree: str | None = None
     result: str | None = None                   # финальный текст агента
+    error: str | None = None                    # причина падения (в т.ч. распознанный сбой API)
     diff_stat: str | None = None
     cost_usd: float = 0.0
     turns: int = 0
@@ -54,6 +55,8 @@ class Task:
     depends_on: list[str] = field(default_factory=list)   # id задач, которые должны быть done
     behind_main: int = 0                        # на сколько коммитов ветка отстала от main
     overlap_files: list[str] = field(default_factory=list)   # файлы, изменённые и в main, и в ветке
+    auto_retries: int = 0                       # сколько раз офис уже сам перезапускал задачу подряд из-за сбоя API
+    auto_retry_at: str | None = None            # когда сработает следующий автоповтор (None — не запланирован)
 
     def touch(self) -> None:
         self.updated_at = datetime.now().isoformat(timespec="seconds")

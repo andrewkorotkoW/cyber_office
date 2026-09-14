@@ -203,10 +203,11 @@ async def retry(task_id: str, body: Reason) -> dict:
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: str) -> dict:
     t = office.store.get(task_id)
-    if t and t.status in ("review", "failed"):
-        await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
     if t and t.status == "running":
         raise HTTPException(400, "агент ещё работает")
+    office.cancel_auto_retry(task_id)
+    if t and t.status in ("review", "failed"):
+        await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
     return {"ok": office.store.delete(task_id)}
 
 

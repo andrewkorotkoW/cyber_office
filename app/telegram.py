@@ -277,6 +277,7 @@ async def actions(callback: CallbackQuery) -> None:
         t = _office.store.get(task_id)
         if t and t.status != "running":
             from app.core import worktree
+            _office.cancel_auto_retry(task_id)
             await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
             _office.store.delete(task_id)
         await callback.answer("Удалено")
@@ -293,6 +294,16 @@ async def actions(callback: CallbackQuery) -> None:
 
 
 # ------------------------------------------------------------------ события офиса -> чат
+async def _notify_admins(text: str, **kw) -> None:
+    if _bot is None:
+        return
+    for uid in config.TG_ADMINS:
+        try:
+            await _bot.send_message(uid, text, parse_mode="HTML", **kw)
+        except Exception:
+            log.exception("tg notify failed")
+
+
 async def _on_event(ev: Event) -> None:
     if _bot is None or not config.TG_ADMINS:
         return
@@ -300,18 +311,24 @@ async def _on_event(ev: Event) -> None:
         t = _office.store.get(ev.task_id)
         if not t or t.status == "done":
             return
-        for uid in config.TG_ADMINS:
-            try:
-                await _bot.send_message(uid, _task_card(t), reply_markup=_task_kb(t), parse_mode="HTML")
-            except Exception:
-                log.exception("tg notify failed")
+        if t.status == "failed" and t.auto_retry_at:
+            return    # автоповтор уже запланирован — про него уведомляем отдельно (task.infra_failure)
+        await _notify_admins(_task_card(t), reply_markup=_task_kb(t))
+    elif ev.kind == "task.infra_failure":
+        t = ev.data.get("task", {})
+        title, reason = t.get("title", ""), ev.data.get("reason", "")
+        max_retries = ev.data.get("max_retries")
+        if ev.data.get("exhausted"):
+            text = (f"🛑 <b>{ESC(title)}</b> так и не восстановилась после {max_retries} автоповторов "
+                    f"из-за сбоя API. Нужно вмешательство.\n{ESC(reason)}\n<code>{ESC(t.get('id', ''))}</code>")
+        else:
+            mins = max(1, round(ev.data.get("delay", 0) / 60))
+            text = (f"⚠️ <b>{ESC(title)}</b> упала по ошибке API, повторю через {mins} мин "
+                    f"(попытка {ev.data.get('attempt')}/{max_retries}).\n{ESC(reason)}\n<code>{ESC(t.get('id', ''))}</code>")
+        await _notify_admins(text)
     elif ev.kind == "repo.after_merge":
         status = "🔄 Приложение перезапущено на новом коде" if ev.data.get("ok") else "⚠️ Хук после мерджа упал"
-        for uid in config.TG_ADMINS:
-            try:
-                await _bot.send_message(uid, f"{status}: {ESC(_repo_name(ev.data.get('repo', '')))}\n<code>{ESC(ev.data.get('output', ''))}</code>", parse_mode="HTML")
-            except Exception:
-                log.exception("tg notify failed")
+        await _notify_admins(f"{status}: {ESC(_repo_name(ev.data.get('repo', '')))}\n<code>{ESC(ev.data.get('output', ''))}</code>")
     elif ev.kind == "mission.updated":
         m = ev.data.get("mission", {})
         if m.get("status") in ("active", "failed", "done"):
@@ -319,11 +336,7 @@ async def _on_event(ev: Event) -> None:
                     "failed": "⚠️ Миссия не спланирована"}[m["status"]]
             text += f": {ESC(m.get('goal', '')[:120])}" + (f"\n{ESC(m.get('summary'))}" if m.get("summary") else "") \
                     + (f"\n{ESC(m.get('error'))}" if m.get("error") else "")
-            for uid in config.TG_ADMINS:
-                try:
-                    await _bot.send_message(uid, text, parse_mode="HTML")
-                except Exception:
-                    log.exception("tg notify failed")
+            await _notify_admins(text)
 
 
 async def run(office: Office, repos_fn) -> None:
