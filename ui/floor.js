@@ -1,14 +1,18 @@
-/* Пиксельный офис. Логическое разрешение 512×288 «пикселей», рисуется в offscreen-canvas
+/* Пиксельный офис. Логическое разрешение 768×432 «пикселей», рисуется в offscreen-canvas
    и масштабируется целым числом без сглаживания — так пиксели остаются чёткими.
-   Люди ходят: за задачей к лотку «входящие», с готовой работой — к лотку «ревью». */
+   Люди ходят: за задачей к лотку «входящие», с готовой работой — к лотку «ревью».
+   Тема cyberpunk рисует отдельную ночную сцену вместо старого рисованного этажа (arcade/gameboy). */
 (function () {
-  const canvas = document.getElementById('floor-canvas');
-  const ctx = canvas.getContext('2d');
-  const LW = 512, LH = 288;
-  const off = document.createElement('canvas'); off.width = LW; off.height = LH;
-  const o = off.getContext('2d');
+  const hasDOM = typeof document !== 'undefined' && typeof window !== 'undefined';
+  const canvas = hasDOM ? document.getElementById('floor-canvas') : null;
+  const ctx = canvas ? canvas.getContext('2d') : null;
+  const LW = 768, LH = 432;
+  const off = hasDOM ? document.createElement('canvas') : null;
+  if (off) { off.width = LW; off.height = LH; }
+  const o = off ? off.getContext('2d') : null;
   let W = 0, H = 0, scale = 1, ox = 0, oy = 0;
   let TH = { floor1: '#1a2231', floor2: '#182030', wall: '#243049', wallLine: '#1d2740', win: '#5b7fb4', winLite: '#8fb3e6', desk: '#3a465c', deskTop: '#2c364a', text: '#e6edf3', mute: '#8a93a3', tray: '#f05a46', tray2: '#5acd96', rug: '#2f3b52', rugEdge: '#44536d' };
+  let THEME_NAME = 'arcade'; // имя текущей темы — определяет, рисовать старую сцену или cyberpunk
   // общий масштаб людей/мебели (сетчатые спрайты рисуются крупнее ~в 1.5 раза), S() — округлённое смещение под этот масштаб
   const HS = 1.5;
   const S = n => Math.round(n * HS);
@@ -181,15 +185,74 @@
   const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255; return `rgb(${r * k | 0},${g * k | 0},${b * k | 0})`; };
 
   // ---------------------------------------------------------------- мир
-  const TRAY_IN = { x: 28, y: 184 }, TRAY_OUT = { x: LW - 60, y: 184 };
+  const TRAY_IN = { x: 42, y: 276 }, TRAY_OUT = { x: LW - 90, y: 276 };
+  const DESK_HOME_Y = 288;
   let agents = [];   // {name,title,color,state, x,y, home:{x,y}, queue:[], carry:null, frame, banana:0}
-  const deskX = (i, n) => Math.round(LW / 2 + (i - (n - 1) / 2) * Math.min(170, (LW - 100) / Math.max(1, n)));
+  // формула столов для рисованного этажа (arcade/gameboy) — не задевает декоративную мебель cyberpunk-сцены
+  const deskX = (i, n) => Math.round(LW / 2 + (i - (n - 1) / 2) * Math.min(255, (LW - 150) / Math.max(1, n)));
+
+  // ---------------------------------------------------------------- препятствия cyberpunk-сцены и обход их чистыми функциями
+  // прямоугольники декоративной мебели новой сцены: стеллаж, колонна, два кресла, декоративный стол, растение —
+  // используются и для расстановки столов агентов, и для проверки точек ходьбы людей/котов
+  function sceneObstacleRects() {
+    return [
+      { x: 0, y: 160, w: 86, h: 100 },    // стеллаж у левой стены
+      { x: 682, y: 160, w: 86, h: 100 },  // колонна у правой стены
+      { x: 110, y: 300, w: 100, h: 90 },  // кресло слева
+      { x: 558, y: 300, w: 100, h: 90 },  // кресло справа
+      { x: 300, y: 190, w: 170, h: 70 },  // декоративный стол с мониторами
+      { x: 246, y: 210, w: 50, h: 110 },  // растение в кадке
+    ];
+  }
+  function isInsideObstacle(point, rects) {
+    return (rects || []).some(r => point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h);
+  }
+  // сдвигает точку наружу через ближайшую грань прямоугольника — не pathfinding, просто «не попадать внутрь»
+  function pushOutsideRect(point, r) {
+    const dLeft = point.x - r.x, dRight = (r.x + r.w) - point.x, dTop = point.y - r.y, dBottom = (r.y + r.h) - point.y;
+    const m = Math.min(dLeft, dRight, dTop, dBottom);
+    if (m === dLeft) return { x: r.x - 1, y: point.y };
+    if (m === dRight) return { x: r.x + r.w + 1, y: point.y };
+    if (m === dTop) return { x: point.x, y: r.y - 1 };
+    return { x: point.x, y: r.y + r.h + 1 };
+  }
+  function pointOutsideObstacles(point, rects) {
+    let p = point;
+    for (const r of (rects || [])) if (isInsideObstacle(p, [r])) p = pushOutsideRect(p, r);
+    return p;
+  }
+  // полосы, в которых расставляются столы агентов на cyberpunk-сцене: один ряд для ≤3, два ряда для 4–6
+  const CYBER_DESK_BANDS = {
+    single: { y: 372, x0: 230, x1: 538 },
+    row1: { y: 350, x0: 230, x1: 538 },
+    row2: { y: 410, x0: 150, x1: 618 },
+  };
+  function computeDeskPositions(n, obstacles) {
+    obstacles = obstacles || [];
+    const rows = n <= 3
+      ? [{ count: n, band: CYBER_DESK_BANDS.single }]
+      : [{ count: Math.ceil(n / 2), band: CYBER_DESK_BANDS.row1 }, { count: Math.floor(n / 2), band: CYBER_DESK_BANDS.row2 }];
+    const positions = [];
+    for (const row of rows) {
+      const { count, band } = row;
+      for (let i = 0; i < count; i++) {
+        const x = Math.round(count === 1 ? (band.x0 + band.x1) / 2 : band.x0 + (band.x1 - band.x0) * i / (count - 1));
+        positions.push(pointOutsideObstacles({ x, y: band.y }, obstacles));
+      }
+    }
+    return positions;
+  }
+  function computeHomes(n) {
+    if (THEME_NAME === 'cyberpunk') return computeDeskPositions(n, sceneObstacleRects());
+    return Array.from({ length: n }, (_, i) => ({ x: deskX(i, n), y: DESK_HOME_Y }));
+  }
 
   function setAgents(list) {
     const n = list.length;
+    const homes = computeHomes(n);
     agents = list.map((a, i) => {
       const prev = agents.find(x => x.name === a.name);
-      const home = { x: deskX(i, n), y: 192 };
+      const home = homes[i];
       return Object.assign({ x: home.x, y: home.y, queue: [], carry: null, frame: 0, banana: 0, walking: false }, prev || {}, a, { home });
     });
   }
@@ -204,9 +267,22 @@
   // площадь пола для прогулок котов — считается от LW/LH, не от текущих чисел
   const catMinX = Math.round(LW * 0.03), catMaxX = LW - Math.round(LW * 0.03);
   const catMinY = Math.round(LH * 0.32), catMaxY = LH - Math.round(LH * 0.05);
-  function catRandomPoint() { return { x: catMinX + Math.random() * (catMaxX - catMinX), y: catMinY + Math.random() * (catMaxY - catMinY) }; }
+  function catRandomPoint() {
+    const draw = () => ({ x: catMinX + Math.random() * (catMaxX - catMinX), y: catMinY + Math.random() * (catMaxY - catMinY) });
+    let p = draw();
+    if (THEME_NAME !== 'cyberpunk') return p;
+    const rects = sceneObstacleRects();
+    // ре-сэмпл — основной способ обойти препятствие; клэмп после нуджа наружу — запасной вариант
+    // на случай, если 20 попыток подряд попали в препятствие (у самой стены область прогулки уже с ним пересекается)
+    for (let i = 0; i < 20 && isInsideObstacle(p, rects); i++) p = draw();
+    if (isInsideObstacle(p, rects)) {
+      const q = pointOutsideObstacles(p, rects);
+      p = { x: Math.min(catMaxX, Math.max(catMinX, q.x)), y: Math.min(catMaxY, Math.max(catMinY, q.y)) };
+    }
+    return p;
+  }
   // лежанка в углу — коты иногда выбирают её вместо случайной точки и охотнее ложатся, оказавшись там
-  const catBed = { x: catMinX + 22, y: catMaxY - 8 };
+  const catBed = { x: catMinX + 33, y: catMaxY - 12 };
   function catNextTarget() { return Math.random() < 0.22 ? catBed : catRandomPoint(); }
   function makeCat(colors) {
     const start = catRandomPoint();
@@ -247,7 +323,8 @@
     const side = Math.random() < 0.5 ? -1 : 1;
     cat.deskGoal = desk.name;
     cat.deskSide = side;
-    cat.deskApproach = { x: desk.home.x + side * CAT_DESK_X_OFFSET, y: desk.home.y + CAT_DESK_APPROACH_Y_OFFSET };
+    const approach = { x: desk.home.x + side * CAT_DESK_X_OFFSET, y: desk.home.y + CAT_DESK_APPROACH_Y_OFFSET };
+    cat.deskApproach = THEME_NAME === 'cyberpunk' ? pointOutsideObstacles(approach, sceneObstacleRects()) : approach;
     cat.deskTop = { x: desk.home.x + side * CAT_DESK_X_OFFSET, y: desk.home.y + CAT_DESK_TOP_Y_OFFSET };
     cat.target = cat.deskApproach;
   }
@@ -347,40 +424,174 @@
     else if (act.drop) { a.carry = null; a.wait = 12; a.queue.shift(); }
   }
 
+  // ---------------------------------------------------------------- подписи с читаемостью на тёмной cyberpunk-сцене
+  // на cyberpunk — тёмная обводка под текстом перед заливкой; на arcade/gameboy — как раньше, без обводки
+  function drawLabel(text, x, y, color) {
+    if (THEME_NAME === 'cyberpunk') { o.lineWidth = 3; o.strokeStyle = 'rgba(8,9,20,0.85)'; o.strokeText(text, x, y); }
+    o.fillStyle = color; o.fillText(text, x, y);
+  }
+
   // ---------------------------------------------------------------- отрисовка
   let bgImg = null; // фон-картинка (прототип выбора фона), null = рисованный этаж
   function setBackground(url) {
     if (!url) { bgImg = null; return; }
     const im = new Image(); im.onload = () => { bgImg = im; }; im.src = url;
   }
-  function drawWorld(t) {
-    if (bgImg) { // картинка вместо пола/стены; мебель и люди рисуются поверх
-      o.drawImage(bgImg, 0, 0, LW, LH);
-      sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5));
-      return;
+
+  // ---- cyberpunk: ночной кабинет с панорамным окном; статичные слои кэшируются в отдельный canvas
+  // и перерисовываются не чаще раза в секунду, поверх каждый кадр идут только дешёвые динамические эффекты
+  const CY = {
+    skyTop: '#0f1226', skyMid: '#1a1f3a', sunset: '#ff8a5b', sunsetLite: '#ffd27a',
+    neonPink: '#ff4fa3', neonBlue: '#4fd8ff', shadow: '#3b2a66',
+    frame: '#0a0d1c', frameLite: '#161c36',
+    buildingA: '#141a33', buildingB: '#0c0f22', windowLit: '#ffd27a', windowLit2: '#4fd8ff',
+    floorA: '#141a30', floorB: '#10152a',
+    wood: '#2a1d3a', shelf: '#3b2a55',
+    chair: '#5a2450', chairShade: '#421a3c',
+    monitorBlue: '#1f3a66',
+    plant: '#2f8f5c', plantDark: '#215f3f', pot: '#3a2a1c',
+  };
+  const WINDOW_BOTTOM = 144, SILL_Y = 144, SILL_H = 10, NEON_Y = SILL_Y + SILL_H;
+  function generateBuildings() {
+    const list = []; let x = 0;
+    while (x < LW) {
+      const w = 40 + Math.floor(Math.random() * 46);
+      const h = 30 + Math.floor(Math.random() * 90);
+      const windows = [];
+      for (let wy = 6; wy < h - 6; wy += 10) for (let wx = 6; wx < w - 6; wx += 10) {
+        if (Math.random() < 0.35) windows.push({ x: wx, y: wy, w: 4, h: 5, lit: Math.random() < 0.6 });
+      }
+      list.push({ x, w, h, windows, shade: list.length % 2 });
+      x += w + 6 + Math.floor(Math.random() * 12);
     }
-    // пол — плитка
-    for (let y = 80; y < LH; y += 16) for (let x = 0; x < LW; x += 16) {
-      o.fillStyle = ((x + y) / 16) % 2 ? TH.floor1 : TH.floor2; o.fillRect(x, y, 16, 16);
+    return list;
+  }
+  const CYBER_BUILDINGS = generateBuildings();
+  let cyberStatic = null, cyberStaticAt = -Infinity;
+  let cyberFlashes = [];
+
+  function renderCyberStatic(g) {
+    g.clearRect(0, 0, LW, LH);
+    const sky = g.createLinearGradient(0, 0, 0, WINDOW_BOTTOM);
+    sky.addColorStop(0, CY.skyTop); sky.addColorStop(0.55, CY.skyMid); sky.addColorStop(1, CY.sunset);
+    g.fillStyle = sky; g.fillRect(0, 0, LW, WINDOW_BOTTOM);
+    g.fillStyle = CY.sunset; g.globalAlpha = 0.5; g.beginPath(); g.arc(150, 108, 34, 0, Math.PI * 2); g.fill(); g.globalAlpha = 1;
+    g.fillStyle = CY.sunsetLite; g.beginPath(); g.arc(150, 108, 26, 0, Math.PI * 2); g.fill();
+    for (const b of CYBER_BUILDINGS) {
+      g.fillStyle = b.shade ? CY.buildingA : CY.buildingB;
+      g.fillRect(b.x, WINDOW_BOTTOM - b.h, b.w, b.h);
+      for (const win of b.windows) if (win.lit) {
+        g.fillStyle = Math.random() < 0.5 ? CY.windowLit : CY.windowLit2;
+        g.fillRect(b.x + win.x, WINDOW_BOTTOM - b.h + win.y, win.w, win.h);
+      }
     }
-    // стена с окнами
-    o.fillStyle = TH.wall; o.fillRect(0, 0, LW, 80); o.fillStyle = TH.wallLine; o.fillRect(0, 76, LW, 4);
-    for (let x = 24; x < LW - 40; x += 80) {
-      o.fillStyle = TH.win; o.fillRect(x, 16, 44, 36); o.fillStyle = TH.winLite; o.fillRect(x + 4, 20, 16, 12); o.fillRect(x + 24, 20, 16, 12);
-      o.fillStyle = TH.winLite; o.globalAlpha = 0.7; o.fillRect(x + 4, 36, 16, 12); o.fillRect(x + 24, 36, 16, 12); o.globalAlpha = 1;
+    g.fillStyle = CY.frame; g.fillRect(0, 0, LW, 8);
+    const sectionW = LW / 5;
+    for (let i = 0; i <= 5; i++) g.fillRect(Math.round(i * sectionW) - 3, 0, 6, WINDOW_BOTTOM);
+    g.fillStyle = CY.frame; g.fillRect(0, SILL_Y, LW, SILL_H);
+    g.fillStyle = CY.neonPink; g.fillRect(0, NEON_Y, LW, 3);
+    for (let y = NEON_Y + 3; y < LH; y += 24) for (let x = 0; x < LW; x += 24) {
+      g.fillStyle = ((x + y) / 24) % 2 ? CY.floorA : CY.floorB; g.fillRect(x, y, 24, 24);
     }
-    sprite(CLOCK, 159, 20, null, HS); // часы на стене между окнами
-    sprite(PLANT, LW - 28, 60, null, HS); sprite(PLANT, 8, 60, null, HS);
-    sprite(COOLER, 44, 84, null, HS);          // кулер с бутылкой
-    sprite(CABINET, 200, 84, null, HS);        // шкаф-стеллаж с папками
-    sprite(COFFEE_MACHINE, 420, 84, null, HS); // кофемашина на тумбе
+    const refl = g.createLinearGradient(0, NEON_Y + 3, 0, NEON_Y + 70);
+    refl.addColorStop(0, 'rgba(255,79,163,0.18)'); refl.addColorStop(1, 'rgba(255,79,163,0)');
+    g.fillStyle = refl; g.fillRect(0, NEON_Y + 3, LW, 70);
+    const shadowGrad = g.createLinearGradient(0, LH - 40, 0, LH);
+    shadowGrad.addColorStop(0, 'rgba(0,0,0,0)'); shadowGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
+    g.fillStyle = shadowGrad; g.fillRect(0, LH - 40, LW, 40);
+
+    const [SH, CO, AL, AR, T, PL] = sceneObstacleRects();
+    // левый стеллаж с книгами
+    g.fillStyle = CY.shelf; g.fillRect(SH.x, SH.y, SH.w, SH.h);
+    for (let sy = SH.y + 8; sy < SH.y + SH.h - 6; sy += 22) {
+      g.fillStyle = CY.frame; g.fillRect(SH.x + 2, sy, SH.w - 4, 4);
+      const books = [CY.neonPink, CY.neonBlue, CY.sunsetLite, CY.shadow, '#8a6d1f'];
+      let bx = SH.x + 6;
+      while (bx < SH.x + SH.w - 8) { g.fillStyle = books[Math.floor(Math.random() * books.length)]; const bw = 4 + Math.floor(Math.random() * 4); g.fillRect(bx, sy - 14, bw, 14); bx += bw + 2; }
+    }
+    // правая колонна с неоновым кантом и экраном-автоматом (сам кант пульсирует динамически поверх)
+    g.fillStyle = CY.frame; g.fillRect(CO.x, CO.y, CO.w, CO.h);
+    g.fillStyle = CY.neonBlue; g.fillRect(CO.x, CO.y, 3, CO.h);
+    g.fillStyle = CY.monitorBlue; g.fillRect(CO.x + 14, CO.y + CO.h - 46, 28, 30);
+    g.fillStyle = CY.frame; g.fillRect(CO.x + 12, CO.y + CO.h - 16, 32, 10);
+    // декоративный длинный стол с двумя мониторами и креслом
+    g.fillStyle = CY.wood; g.fillRect(T.x, T.y + T.h - 10, T.w, 10);
+    g.fillStyle = CY.frameLite; g.fillRect(T.x + 4, T.y + T.h - 4, 6, 20); g.fillRect(T.x + T.w - 10, T.y + T.h - 4, 6, 20);
+    g.fillStyle = CY.frame; g.fillRect(T.x + 14, T.y + 6, 40, 30);
+    g.fillStyle = CY.monitorBlue; g.fillRect(T.x + 17, T.y + 9, 34, 22);
+    g.fillStyle = CY.frame; g.fillRect(T.x + T.w - 54, T.y + 6, 40, 30);
+    g.fillStyle = CY.neonPink;
+    for (let i = 0; i < 60; i++) g.fillRect(T.x + T.w - 51 + Math.random() * 34, T.y + 9 + Math.random() * 22, 2, 2);
+    g.fillStyle = CY.chairShade; g.fillRect(T.x + T.w / 2 - 8, T.y + T.h + 6, 16, 20);
+    g.fillStyle = CY.chair; g.fillRect(T.x + T.w / 2 - 8, T.y + T.h + 6, 16, 6);
+    // растение в кадке
+    g.fillStyle = CY.pot; g.fillRect(PL.x + 8, PL.y + PL.h - 26, PL.w - 16, 26);
+    g.fillStyle = CY.plantDark; g.beginPath(); g.arc(PL.x + PL.w / 2, PL.y + 30, 26, 0, Math.PI * 2); g.fill();
+    g.fillStyle = CY.plant;
+    g.beginPath(); g.arc(PL.x + PL.w / 2 - 6, PL.y + 22, 20, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(PL.x + PL.w / 2 + 8, PL.y + 26, 18, 0, Math.PI * 2); g.fill();
+    // два бордово-фиолетовых кресла по краям сцены
+    for (const rect of [AL, AR]) {
+      g.fillStyle = CY.chairShade; g.fillRect(rect.x, rect.y + 14, rect.w, rect.h - 14);
+      g.fillStyle = CY.chair; g.fillRect(rect.x, rect.y, rect.w, rect.h - 20);
+      g.fillStyle = CY.chairShade; g.fillRect(rect.x, rect.y, 12, rect.h - 6); g.fillRect(rect.x + rect.w - 12, rect.y, 12, rect.h - 6);
+    }
+  }
+
+  function stepCyberFlashes() {
+    if (Math.random() < 0.04 && CYBER_BUILDINGS.length) {
+      const b = CYBER_BUILDINGS[Math.floor(Math.random() * CYBER_BUILDINGS.length)];
+      if (b.windows.length) {
+        const win = b.windows[Math.floor(Math.random() * b.windows.length)];
+        cyberFlashes.push({ b, win, life: 40 + Math.random() * 50 });
+      }
+    }
+    cyberFlashes = cyberFlashes.filter(f => --f.life > 0);
+  }
+  function drawCyberDynamicFX(t) {
+    stepCyberFlashes();
+    o.fillStyle = '#fff2c8';
+    for (const f of cyberFlashes) o.fillRect(f.b.x + f.win.x, WINDOW_BOTTOM - f.b.h + f.win.y, f.win.w, f.win.h);
+    const pulse = 0.55 + 0.45 * Math.sin(t / 900);
+    o.fillStyle = CY.neonPink; o.globalAlpha = pulse; o.fillRect(0, NEON_Y, LW, 3); o.globalAlpha = 1;
+    const CO = sceneObstacleRects()[1];
+    const pulse2 = 0.5 + 0.5 * Math.sin(t / 700 + 1.3);
+    o.fillStyle = CY.neonBlue; o.globalAlpha = pulse2; o.fillRect(CO.x, CO.y, 3, CO.h); o.globalAlpha = 1;
+    const reflAlpha = 0.08 + 0.05 * Math.sin(t / 1400);
+    o.fillStyle = `rgba(255,79,163,${reflAlpha.toFixed(3)})`; o.fillRect(0, NEON_Y + 3, LW, 70);
+  }
+  function drawCyberBackground(t) {
+    if (!cyberStatic) { cyberStatic = document.createElement('canvas'); cyberStatic.width = LW; cyberStatic.height = LH; }
+    if (t - cyberStaticAt >= 1000) { cyberStaticAt = t; renderCyberStatic(cyberStatic.getContext('2d')); }
+    o.drawImage(cyberStatic, 0, 0);
+    drawCyberDynamicFX(t);
+  }
+
+  // ---- старый рисованный этаж (arcade/gameboy) — та же геометрия, что и раньше, просто в мире 768×432
+  function drawLegacyBackground() {
+    for (let y = 120; y < LH; y += 24) for (let x = 0; x < LW; x += 24) {
+      o.fillStyle = ((x + y) / 24) % 2 ? TH.floor1 : TH.floor2; o.fillRect(x, y, 24, 24);
+    }
+    o.fillStyle = TH.wall; o.fillRect(0, 0, LW, 120); o.fillStyle = TH.wallLine; o.fillRect(0, 114, LW, 6);
+    for (let x = 36; x < LW - 60; x += 120) {
+      o.fillStyle = TH.win; o.fillRect(x, 24, 66, 54); o.fillStyle = TH.winLite; o.fillRect(x + 6, 30, 24, 18); o.fillRect(x + 36, 30, 24, 18);
+      o.fillStyle = TH.winLite; o.globalAlpha = 0.7; o.fillRect(x + 6, 54, 24, 18); o.fillRect(x + 36, 54, 24, 18); o.globalAlpha = 1;
+    }
+    sprite(CLOCK, 239, 30, null, HS); // часы на стене между окнами
+    sprite(PLANT, LW - 42, 90, null, HS); sprite(PLANT, 12, 90, null, HS);
+    sprite(COOLER, 66, 126, null, HS);          // кулер с бутылкой
+    sprite(CABINET, 300, 126, null, HS);        // шкаф-стеллаж с папками
+    sprite(COFFEE_MACHINE, 630, 126, null, HS); // кофемашина на тумбе
     // коврик у входа
-    o.fillStyle = TH.rugEdge; o.fillRect(228, 244, 56, 26);
-    o.fillStyle = TH.rug; o.fillRect(232, 248, 48, 18);
+    o.fillStyle = TH.rugEdge; o.fillRect(342, 366, 84, 39);
+    o.fillStyle = TH.rug; o.fillRect(348, 372, 72, 27);
     o.fillStyle = TH.rugEdge;
-    for (let sx = 236; sx < 276; sx += 10) o.fillRect(sx, 252, 4, 10);
+    for (let sx = 354; sx < 414; sx += 15) o.fillRect(sx, 378, 6, 15);
+  }
+
+  // подвижные объекты и мебель агентов — общие для всех тем, рисуются каждый кадр поверх фона
+  function drawActors(t) {
     sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5)); // лежанка котов в углу
-    // лотки
     sprite(TRAY, TRAY_IN.x, TRAY_IN.y, null, HS); sprite(TRAY, TRAY_OUT.x, TRAY_OUT.y, null, HS);
     o.fillStyle = TH.tray; o.fillRect(TRAY_IN.x + S(2), TRAY_IN.y - S(6), S(28), S(4));
     o.fillStyle = TH.tray2; o.fillRect(TRAY_OUT.x + S(2), TRAY_OUT.y - S(6), S(28), S(4));
@@ -402,12 +613,23 @@
     // подписи
     o.font = '600 14px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'top';
     for (const a of agents) {
-      o.fillStyle = TH.text; o.fillText(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6));
-      o.fillStyle = TH.mute; o.font = '13px "Pixelify Sans", monospace'; o.fillText({ idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует' }[a.state] || a.state, a.home.x, a.home.y + S(24)); o.font = '600 14px "Pixelify Sans", monospace';
+      drawLabel(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6), TH.text);
+      o.font = '13px "Pixelify Sans", monospace';
+      drawLabel({ idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует' }[a.state] || a.state, a.home.x, a.home.y + S(24), TH.mute);
+      o.font = '600 14px "Pixelify Sans", monospace';
     }
-    o.font = '600 14px "Pixelify Sans", monospace';
-    o.fillStyle = TH.tray; o.fillText('задачи', TRAY_IN.x + S(16), TRAY_IN.y + S(14));
-    o.fillStyle = TH.tray2; o.fillText('ревью', TRAY_OUT.x + S(16), TRAY_OUT.y + S(14));
+    drawLabel('задачи', TRAY_IN.x + S(16), TRAY_IN.y + S(14), TH.tray);
+    drawLabel('ревью', TRAY_OUT.x + S(16), TRAY_OUT.y + S(14), TH.tray2);
+  }
+
+  function drawWorld(t) {
+    if (bgImg) { // картинка вместо пола/стены; мебель и люди рисуются поверх
+      o.drawImage(bgImg, 0, 0, LW, LH);
+      sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5));
+      return;
+    }
+    if (THEME_NAME === 'cyberpunk') drawCyberBackground(t); else drawLegacyBackground();
+    drawActors(t);
   }
 
   function drawHuman(a, t) {
@@ -444,7 +666,6 @@
     scale = Math.max(1, Math.floor(Math.min(W / LW, H / LH)));
     ox = Math.floor((W - LW * scale) / 2); oy = Math.floor((H - LH * scale) / 2);
   }
-  window.addEventListener('resize', resize);
 
   function frame(t) {
     if (!W) resize();
@@ -458,7 +679,27 @@
     requestAnimationFrame(frame);
   }
 
-  window.Floor = { setAgents, setState, envelope, setBackground, setTheme(t) { TH = Object.assign({}, TH, t); } };
-  document.fonts && document.fonts.load('8px "Pixelify Sans"').catch(() => {});
-  requestAnimationFrame(frame);
+  function setTheme(colors, name) {
+    TH = Object.assign({}, TH, colors);
+    if (name && name !== THEME_NAME) {
+      THEME_NAME = name;
+      if (agents.length) {
+        const homes = computeHomes(agents.length);
+        agents.forEach((a, i) => { a.home = homes[i]; });
+      }
+    }
+  }
+
+  if (hasDOM) {
+    window.addEventListener('resize', resize);
+    window.Floor = { setAgents, setState, envelope, setBackground, setTheme };
+    document.fonts && document.fonts.load('8px "Pixelify Sans"').catch(() => {});
+    requestAnimationFrame(frame);
+  }
+
+  // экспорт чистых функций для тестов в node (dwight) — безопасен для браузера: typeof module там undefined,
+  // так что этот блок в браузере не выполняется и window.Floor не затрагивает
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS };
+  }
 })();
