@@ -527,7 +527,7 @@ function applyTheme(name) {
   document.documentElement.dataset.theme = name;
   try { localStorage.setItem('ao_theme', name); } catch (e) {}
   document.querySelectorAll('#themes button').forEach(b => b.classList.toggle('on', b.dataset.theme === name));
-  if (window.Floor && Floor.setTheme) Floor.setTheme(THEMES[name]);
+  if (window.Floor && Floor.setTheme) Floor.setTheme(THEMES[name], name);
 }
 document.querySelectorAll('#themes button').forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
 applyTheme((() => { try { return localStorage.getItem('ao_theme'); } catch (e) { return null; } })() || 'arcade');
