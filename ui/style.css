@@ -35,6 +35,11 @@ header .mode { font-size:12px; color:var(--mute); padding:3px 8px; border:2px so
 header .mode.fake { color:var(--warn); border-color:var(--warn) }
 header .mode.busy { color:#4fd8ff; border-color:#4fd8ff; text-shadow:0 0 4px #4fd8ff, 0 0 10px #4fd8ff88; box-shadow:0 0 6px #4fd8ff88, inset 0 0 6px #4fd8ff33; animation:mode-pulse 1.6s ease-in-out infinite }
 @keyframes mode-pulse { 0%,100% { box-shadow:0 0 4px #4fd8ff66, inset 0 0 4px #4fd8ff22 } 50% { box-shadow:0 0 14px #4fd8ffcc, inset 0 0 10px #4fd8ff55 } }
+.notify-bell { position:relative; font-size:16px; padding:5px 10px }
+.notify-bell .badge { position:absolute; top:-6px; right:-6px; background:var(--accent); color:var(--bg); font-size:10px; line-height:1; padding:3px 4px; border:1px solid var(--line); min-width:8px; text-align:center }
+.notify-row { padding:8px 0; border-bottom:1px dashed var(--line); font-size:13px }
+.notify-row.unread { color:var(--text) } .notify-row:not(.unread) { color:var(--mute) }
+.notify-row .ts { color:var(--mute); font-size:11px; margin-right:8px }
 header .spacer { flex:1 }
 .themes { display:flex; gap:4px; margin-right:8px }
 .themes button { padding:4px 8px; font-size:11px; text-transform:uppercase }
@@ -49,23 +54,54 @@ button:active { transform:translate(3px,3px); box-shadow:none }
 button.primary { background:var(--accent); border-color:var(--accent); color:var(--bg); box-shadow:3px 3px 0 var(--shadow) }
 button.ok { background:var(--ok); border-color:var(--ok); color:var(--bg) }
 button.small { padding:4px 8px; font-size:12px; box-shadow:2px 2px 0 var(--line) }
-main { display:grid; grid-template-columns: 1.15fr 1fr; grid-template-rows: 330px 1fr; gap:12px; padding:12px; height:calc(100vh - 56px); }
+main { display:flex; gap:12px; padding:12px; height:calc(100vh - 56px); min-height:0 }
 .panel { background:var(--panel); border:3px solid var(--line); border-radius:0; overflow:hidden; display:flex; flex-direction:column; min-height:0; box-shadow:5px 5px 0 var(--line) }
-.panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--mute); margin:0; padding:8px 14px; border-bottom:3px solid var(--line); background:var(--card) }
+.panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--mute); margin:0; padding:8px 14px; border-bottom:3px solid var(--line); background:var(--card); display:flex; align-items:center; justify-content:space-between; gap:8px }
 .panel .body { padding:10px 14px; overflow:auto; flex:1; min-height:0 }
-#floor { grid-column:1; grid-row:1 } #floor canvas { width:100%; height:100%; display:block }
+
+/* колонка проектов слева */
+#projects { flex:none; width:210px }
+.projects-select { display:none }
+.project-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; margin-bottom:2px; cursor:pointer; border:2px solid transparent; font-size:12.5px }
+.project-row:hover { background:var(--card) }
+.project-row.on { border-color:var(--accent); background:var(--card); color:var(--accent) }
+.project-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.project-counts { display:flex; gap:4px; flex:none }
+.project-counts b { font-style:normal; font-size:10.5px; padding:0 5px; border:1px solid var(--line) }
+.project-counts .c-review { color:var(--warn); border-color:var(--warn) }
+.project-counts .c-running { color:var(--blue); border-color:var(--blue) }
+.project-counts .c-total { font-size:10.5px; color:var(--mute); padding:0 3px }
+
+/* содержимое видов: Планёрка / Офис / Тесты — общая grid-сетка, раскладка своя под каждый вид */
+.view-content { flex:1; min-width:0; display:grid; gap:12px; min-height:0; grid-template-columns: 1.15fr 1fr; grid-template-rows: 330px 1fr; }
+#view-planerka, #floor, #terminal, #board, #tests-view { display:none; min-height:0 }
+body[data-view="planerka"] .view-content { grid-template-columns:1fr; grid-template-rows:auto 1fr }
+body[data-view="planerka"] #view-planerka { display:block; grid-column:1; grid-row:1; overflow:auto }
+body[data-view="planerka"] #floor { display:flex; grid-column:1; grid-row:2 }
+body[data-view="office"] .view-content { grid-template-columns: 1.15fr 1fr; grid-template-rows: 330px 1fr }
+body[data-view="office"] #terminal { display:flex; grid-column:1 / span 2; grid-row:1 }
+body[data-view="office"] #board { display:flex; grid-column:1 / span 2; grid-row:2 }
+body[data-view="tests"] .view-content { grid-template-columns:1fr; grid-template-rows:1fr }
+body[data-view="tests"] #tests-view { display:flex; grid-column:1; grid-row:1 }
+
+#floor canvas { width:100%; height:100%; display:block }
 #floor .body { padding:0 }
-#terminal { grid-column:2; grid-row:1 }
 #terminal .body { font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap }
 #terminal .line { padding:1px 0; border-bottom:1px dashed var(--line) }
 #terminal .line .who { color:var(--mute); margin-right:8px }
 .avatar { border-radius:50%; object-fit:cover; vertical-align:middle; margin-right:6px; border:1px solid var(--line) }
 #terminal .line.tool { color:var(--blue) } #terminal .line.text { color:var(--text) } #terminal .line.state { color:var(--warn) }
-#board { grid-column:1 / span 2; grid-row:2 }
 
-body[data-view="tests"] #floor, body[data-view="tests"] #terminal, body[data-view="tests"] #board { display:none }
-#tests-view { display:none; grid-column:1 / span 2; grid-row:1 / span 2 }
-body[data-view="tests"] #tests-view { display:flex }
+/* Планёрка: 4 блока сеткой + сцена этажа ниже */
+.planerka-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px }
+.plk-block .body { max-height:34vh }
+.plk-running-row { padding:6px 0; border-bottom:1px dashed var(--line); cursor:pointer }
+.plk-running-row:hover { filter:brightness(1.15) }
+.plk-running-row .t { font-weight:600; display:flex; align-items:center; gap:2px }
+.plk-running-row .m { color:var(--mute); font-size:12px; margin-top:2px }
+.plk-running-row .res { margin-top:4px; font-size:12.5px }
+.plk-stat { padding:4px 0; font-size:13px }
+.plk-ev-time { color:var(--mute); font-size:11px; margin-right:6px }
 .tests-toolbar { display:flex; gap:8px; margin-bottom:10px }
 .tests-layout { display:grid; grid-template-columns:1.1fr 1fr; gap:12px; height:calc(100% - 40px); min-height:0 }
 .tests-tree, .tests-side { overflow:auto; min-height:0 }
@@ -207,8 +243,15 @@ header { padding-top:max(10px, env(safe-area-inset-top)); padding-left:max(16px,
 
   /* одна колонка вместо сетки 2x2; тесты — тоже во всю ширину */
   main { display:flex; flex-direction:column; height:auto; padding:10px; gap:10px }
-  #board, #tests-view { grid-column:auto; grid-row:auto }
+  .view-content, body[data-view="planerka"] .view-content, body[data-view="office"] .view-content, body[data-view="tests"] .view-content { display:flex; flex-direction:column; gap:10px }
+  #view-planerka, #floor, #terminal, #board, #tests-view { grid-column:auto; grid-row:auto }
   body[data-view="tests"] #tests-view { display:flex }
+  .planerka-grid { grid-template-columns:1fr }
+
+  /* колонка проектов → выпадающий select */
+  #projects { width:auto; flex:none }
+  .projects-list { display:none }
+  .projects-select { display:block }
 
   /* сцена офиса: полоска ~120px, раскрывается кнопкой, пропорции 768x432 сохраняются в развёрнутом виде */
   #floor { flex:none }
