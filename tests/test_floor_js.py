@@ -182,7 +182,12 @@ def test_idle_and_planning_share_the_same_sitting_pose_selection_branch():
 def test_module_exports_no_public_walk_or_pathfinding_functions_for_people():
     """Люди больше не ходят (ui/floor.js, комментарий у LEGS_BODY: 'ходьбы больше нет — люди всегда
     сидят/стоят на своём месте'). Убеждаемся, что в module.exports не осталось публичных функций
-    ходьбы/pathfinding для людей (для котов такая логика есть, но она не экспортируется — и не должна)."""
+    ходьбы/pathfinding для людей (для котов такая логика есть, но она не экспортируется — и не должна).
+
+    Кибер-пёс (третий питомец) — исключение: он единственный, кто должен ходить, и его чистые функции
+    маршрутизации/погони намеренно экспортированы для смоук-тестов ниже (computeDogRoute, dogShouldChase,
+    segmentIntersectsRect, DOG_*). Их имена подобраны так, чтобы не задевать banned_substrings — список
+    остаётся защитой именно от случайно вернувшейся ходьбы людей, а не от пса."""
     out = _run_node(f"""
         const F = require({json.dumps(str(FLOOR_JS))});
         console.log(JSON.stringify(Object.keys(F)));
@@ -197,8 +202,115 @@ def test_module_exports_no_public_walk_or_pathfinding_functions_for_people():
         "LW", "LH", "deskX", "computeDeskPositions", "isInsideObstacle", "pointOutsideObstacles",
         "sceneObstacleRects", "CYBER_DESK_BANDS", "characterFor", "CHAR_PALETTE", "CHAR_HEADS",
         "humanRows", "DESK_FOOT", "DESK_MIN_GAP",
+        "PET_COUNT", "segmentIntersectsRect", "computeDogRoute", "dogShouldChase",
+        "DOG_CHASE_RADIUS", "DOG_CHASE_COOLDOWN_MS", "DOG_ROUTE_MARGIN",
     }
     assert exported == expected, f"module.exports изменился: {exported.symmetric_difference(expected)}"
+
+
+# ---------------------------------------------------------------- кибер-пёс (третий питомец)
+
+def test_three_pets_total():
+    """Задача требует ровно трёх постоянных питомцев на этаже: два кота (уже были) + кибер-пёс."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify({{ petCount: F.PET_COUNT }}));
+    """)
+    assert out["petCount"] == 3
+
+
+def test_dog_route_never_crosses_scene_obstacles():
+    """computeDogRoute() — чистая функция обхода препятствий для пса (тот же принцип, что и у котов,
+    но пёс должен реально не пересекать мебель по пути, а не только не попадать в неё точечно). Гоняем
+    её на большом наборе точек, включая точки почти вплотную (1px) к краю препятствий — ровно то, что
+    получается у котов через pointOutsideObstacles() (см. pushOutsideRect, ui/floor.js) — и проверяем,
+    что ни один отрезок построенного маршрута не пересекает ни одно sceneObstacleRects()."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const rects = F.sceneObstacleRects();
+
+        function segOK(a, b) {{ return !rects.some(r => F.segmentIntersectsRect(a, b, r)); }}
+        function isFree(p) {{ return rects.every(r => !(p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h)); }}
+        const MINX = 23, MAXX = 745, MINY = 138, MAXY = 410; // границы прогулки котов/пса (catMinX/Y..catMaxX/Y)
+        function inBounds(p) {{ return p.x >= MINX && p.x <= MAXX && p.y >= MINY && p.y <= MAXY; }}
+
+        let seed = 7;
+        function rnd() {{ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }}
+        function randPoint() {{ return {{ x: MINX + rnd() * (MAXX - MINX), y: MINY + rnd() * (MAXY - MINY) }}; }}
+        function pushNear(rect) {{
+          const sides = [
+            {{ x: rect.x - 1, y: rect.y + rect.h / 2 }},
+            {{ x: rect.x + rect.w + 1, y: rect.y + rect.h / 2 }},
+            {{ x: rect.x + rect.w / 2, y: rect.y - 1 }},
+            {{ x: rect.x + rect.w / 2, y: rect.y + rect.h + 1 }},
+          ];
+          return sides[Math.floor(rnd() * 4)];
+        }}
+
+        let total = 0, fails = 0;
+        const examples = [];
+        for (let i = 0; i < 4000; i++) {{
+          let from, to, skip = false;
+          if (rnd() < 0.35) {{ from = pushNear(rects[Math.floor(rnd() * rects.length)]); if (!inBounds(from)) skip = true; }}
+          else {{ from = randPoint(); while (!isFree(from)) from = randPoint(); }}
+          if (rnd() < 0.35) {{ to = pushNear(rects[Math.floor(rnd() * rects.length)]); if (!inBounds(to)) skip = true; }}
+          else {{ to = randPoint(); while (!isFree(to)) to = randPoint(); }}
+          if (skip) continue;
+          const route = F.computeDogRoute(from, to, rects);
+          let ok = true;
+          for (let j = 1; j < route.length; j++) if (!segOK(route[j - 1], route[j])) ok = false;
+          total++;
+          if (!ok) {{ fails++; if (examples.length < 3) examples.push({{ from, to, route }}); }}
+        }}
+        console.log(JSON.stringify({{ total, fails, examples }}));
+    """)
+    assert out["total"] > 1000, "слишком мало сгенерированных пар точек — проверка не покрывает сцену"
+    assert out["fails"] == 0, f"маршрут пересёк препятствие в {out['fails']}/{out['total']} случаях: {out['examples']}"
+
+
+def test_dog_route_is_direct_line_when_no_obstacles_in_the_way():
+    """Если obstacles пуст (арcade/gameboy без препятствий) или прямая уже свободна — маршрут не должен
+    городить лишние точки, просто [from, to]."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const from = {{ x: 40, y: 200 }}, to = {{ x: 100, y: 220 }};
+        console.log(JSON.stringify({{
+          noObstacles: F.computeDogRoute(from, to, []),
+          clearPath: F.computeDogRoute({{ x: 40, y: 420 }}, {{ x: 100, y: 420 }}, F.sceneObstacleRects()),
+        }}));
+    """)
+    assert out["noObstacles"] == [{"x": 40, "y": 200}, {"x": 100, "y": 220}]
+    assert out["clearPath"] == [{"x": 40, "y": 420}, {"x": 100, "y": 420}]
+
+
+def test_dog_chase_does_not_trigger_more_often_than_the_cooldown():
+    """dogShouldChase(now, lastChaseAt, dist) — чистая функция лимита частоты «погони»: должна разрешать
+    начать погоню только когда кот ближе DOG_CHASE_RADIUS и с прошлой погони прошло не меньше
+    DOG_CHASE_COOLDOWN_MS (по условию задачи — не чаще раза в 2 минуты)."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        const R = F.DOG_CHASE_RADIUS, C = F.DOG_CHASE_COOLDOWN_MS;
+        console.log(JSON.stringify({{
+          radius: R,
+          cooldownMs: C,
+          firstChaseEverAllowed: F.dogShouldChase(0, -Infinity, R - 1),
+          tooFarNeverChases: F.dogShouldChase(0, -Infinity, R + 1),
+          rightAfterPreviousChaseBlocked: F.dogShouldChase(5000, 0, R - 1),
+          justBeforeCooldownEndsBlocked: F.dogShouldChase(C - 1, 0, R - 1),
+          exactlyAtCooldownAllowed: F.dogShouldChase(C, 0, R - 1),
+          longAfterCooldownAllowed: F.dogShouldChase(C + 500000, 0, R - 1),
+          farAwayIgnoresCooldown: F.dogShouldChase(C, 0, R + 5),
+        }}));
+    """)
+    assert out["radius"] == 60
+    assert out["cooldownMs"] == 120000
+    assert out["firstChaseEverAllowed"] is True
+    assert out["tooFarNeverChases"] is False
+    assert out["rightAfterPreviousChaseBlocked"] is False
+    assert out["justBeforeCooldownEndsBlocked"] is False
+    assert out["exactlyAtCooldownAllowed"] is True
+    assert out["longAfterCooldownAllowed"] is True
+    assert out["farAwayIgnoresCooldown"] is False
 
 
 def test_named_agent_poses_match_generic_layout_size():
