@@ -343,6 +343,10 @@
     const a = agents.find(x => x.name === name); if (!a) return;
     const spec = MAIL_SPECS[kind]; if (!spec) return;
     a.mail = { kind, life: spec.life, total: spec.life };
+    // kind 'out' — задача ушла на ревью (task.review), 'banana' — одобрена (task.done): это и есть
+    // событийная шина, о которой просила задача — отдельного Floor.notify() не нужно, эти два вызова
+    // envelope() уже приходят из app.js на статусы review/done (см. app.js: Floor.envelope('out'/'banana', ...))
+    if (kind === 'out' || kind === 'banana') dogReactTo(name);
   }
 
   // площадь пола для прогулок котов — считается от LW/LH, не от текущих чисел
@@ -643,6 +647,271 @@
     drawCyberDynamicFX(t);
   }
 
+  // ---------------------------------------------------------------- офисный кибер-пёс (третий постоянный питомец)
+  // спрайты — тот же приём scale2(), что и у котов: авторим маленькую ASCII-сетку, каждый символ
+  // становится блоком 2×2. f — тело, y — глаза, n — нос, k — тёмный ошейник, p — розовый огонёк ошейника.
+  const DOG_STAND = scale2(['.f.........f.', '.ff.......ff.', '.fffffffffff.', '.ffyffnffyff.', '.fffkkpkkfff.', '..ff.....ff..']);
+  const DOG_WALK1 = scale2(['.f.........f.', '.ff.......ff.', '.fffffffffff.', '.ffyffnffyff.', '.fffkkpkkfff.', '.ff.......ff.']);
+  const DOG_WALK2 = scale2(['.f.........f.', '.ff.......ff.', '.fffffffffff.', '.ffyffnffyff.', '.fffkkpkkfff.', '...ff...ff...']);
+  const DOG_SIT = scale2(['.f.........f.', '.ff.......ff.', '.fffffffffff.', '.ffyffnffyff.', '.fffkkpkkfff.', '.fffffffffff.', '..ff.....ff..']);
+  const DOG_LIE = scale2(['.fffffffffff.', '.ffyffnffyff.', '..fffkpkfff..', '..fffffffff..', '...fffffff...']);
+  // палитры: cyberpunk — неоновая (переиспользует CY.neonBlue/neonPink остальной сцены), arcade/gameboy —
+  // упрощённый монохромный пёс без свечения (задание допускает это явно)
+  const DOG_COLORS_CYBER = { f: '#141c2e', y: CY.neonBlue, n: '#05060c', k: '#05060c', p: '#7a2350' };
+  const DOG_COLORS_MONO = { f: '#242e42', y: '#c9d3e0', n: '#0e131e', k: '#0e131e', p: '#0e131e' };
+  const DOG_CHASE_RADIUS = 60;          // «кот рядом» — дистанция начала погони
+  const DOG_CHASE_COOLDOWN_MS = 120000; // не чаще раза в 2 минуты
+  const DOG_ROUTE_MARGIN = 10;          // запас вокруг препятствий при обходе маршрута (чуть больше полутуловища пса)
+  const DOG_WALK_SPEED = 1.1, DOG_RUN_SPEED = 2.0; // быстрее кота (v=0.9)
+  const DOG_REST_MIN = 180, DOG_REST_RANGE = 150;  // 3–5с при 60fps: пауза у стола / «смотрит вверх» после погони
+  const DOG_WAG_TICKS = 120;                        // ~2с виляния хвостом после task.review/task.done
+  const DOG_BARK_CHANCE = 0.0004;
+
+  // сегмент p1→p2 пересекает прямоугольник rect? Стандартный slab-метод (без тригонометрии, без сэмплинга) —
+  // используется computeDogRoute(), чтобы понять, что прямой путь до цели проходит сквозь мебель.
+  function segmentIntersectsRect(p1, p2, rect) {
+    let tmin = 0, tmax = 1;
+    const dx = p2.x - p1.x, dy = p2.y - p1.y;
+    const axes = [[p1.x, dx, rect.x, rect.x + rect.w], [p1.y, dy, rect.y, rect.y + rect.h]];
+    for (const [p, d, lo, hi] of axes) {
+      if (d === 0) { if (p < lo || p > hi) return false; continue; }
+      let t1 = (lo - p) / d, t2 = (hi - p) / d;
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return false;
+    }
+    return true;
+  }
+  function inflateRect(r, margin) { return { x: r.x - margin, y: r.y - margin, w: r.w + margin * 2, h: r.h + margin * 2 }; }
+  const ptDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const ROUTE_CELL = 24; // размер ячейки сетки для BFS-обхода препятствий — совпадает с шагом клетки пола сцены
+  // BFS по грубой сетке 24×24 (768×432 ⇒ 32×18 клеток): надёжнее, чем обход препятствий по их углам
+  // (тот подход давал ложные пересечения на почти касательных траекториях и зацикливался между двумя
+  // соседними препятствиями) — возвращает центры клеток маршрута без from/to или null, если пути нет
+  // (в этой сцене препятствия не образуют замкнутых стен, так что null практически не случается)
+  function dogGridRoute(from, to, rects, margin) {
+    const inflated = rects.map(r => inflateRect(r, margin));
+    const cols = Math.ceil(LW / ROUTE_CELL), rows = Math.ceil(LH / ROUTE_CELL);
+    const clamp = (v, max) => Math.min(max - 1, Math.max(0, v));
+    const cellOf = p => ({ cx: clamp(Math.floor(p.x / ROUTE_CELL), cols), cy: clamp(Math.floor(p.y / ROUTE_CELL), rows) });
+    const cellCenter = c => ({ x: c.cx * ROUTE_CELL + ROUTE_CELL / 2, y: c.cy * ROUTE_CELL + ROUTE_CELL / 2 });
+    // клетка «занята», если весь её квадрат (а не только центр) пересекается с раздутым препятствием —
+    // тогда прямая между центрами двух СВОБОДНЫХ соседних клеток гарантированно не задевает препятствие
+    // (объединение двух соседних клеток — тоже прямоугольник; если бы препятствие резало границу между
+    // ними, оно задело бы хотя бы одну из клеток целиком, а не только точку-центр)
+    const blocked = (cx, cy) => {
+      const cr = { x: cx * ROUTE_CELL, y: cy * ROUTE_CELL, w: ROUTE_CELL, h: ROUTE_CELL };
+      return inflated.some(r => cr.x < r.x + r.w && cr.x + cr.w > r.x && cr.y < r.y + r.h && cr.y + cr.h > r.y);
+    };
+    // from/to — гарантированно свободные точки вызывающего кода, но их клетка сетки может целиком
+    // перекрыться раздутым препятствием (точка стоит близко к краю мебели, а клетка крупнее зазора) —
+    // тогда ищем ближайшую реально свободную клетку с прямой видимостью от точки, расширяя кольцо поиска
+    function anchor(p) {
+      const base = cellOf(p);
+      for (let r = 0; r <= 6; r++) {
+        let bestC = null, bestD = Infinity;
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const cx = base.cx + dx, cy = base.cy + dy;
+          if (cx < 0 || cy < 0 || cx >= cols || cy >= rows || blocked(cx, cy)) continue;
+          const c = cellCenter({ cx, cy });
+          // видимость от самой точки p проверяем по «сырым» (не раздутым) препятствиям: p — гарантированно
+          // не внутри мебели, но вполне может лежать внутри margin-буфера (например, кот у самого края
+          // стола) — раздутый прямоугольник в этом случае «накрывает» саму точку p, и любой отрезок из неё
+          // формально «пересекает» его, хотя реального препятствия там нет
+          if (rects.some(rr => segmentIntersectsRect(p, c, rr))) continue;
+          const d = ptDist(p, c);
+          if (d < bestD) { bestD = d; bestC = { cx, cy }; }
+        }
+        if (bestC) return bestC;
+      }
+      return base;
+    }
+    const start = anchor(from), goal = anchor(to);
+    const key = c => c.cy * cols + c.cx;
+    const seen = new Set([key(start)]);
+    const prev = new Map();
+    const queue = [start];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi];
+      if (cur.cx === goal.cx && cur.cy === goal.cy) {
+        const path = [cur]; let c = cur;
+        while (key(c) !== key(start)) { c = prev.get(key(c)); path.push(c); }
+        path.reverse();
+        return path.map(cc => ({ x: cc.cx * ROUTE_CELL + ROUTE_CELL / 2, y: cc.cy * ROUTE_CELL + ROUTE_CELL / 2 }));
+      }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cur.cx + dx, ny = cur.cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const k = ny * cols + nx;
+        if (seen.has(k) || blocked(nx, ny)) continue;
+        seen.add(k); prev.set(k, cur); queue.push({ cx: nx, cy: ny });
+      }
+    }
+    return null;
+  }
+  // «string pulling»: жадно спрямляет ломаную сетки — из каждой сохранённой точки ищет самую дальнюю
+  // точку маршрута, до которой прямая ещё не задевает ни одного (раздутого) препятствия; путь остаётся
+  // гарантированно свободным (проверяется той же segmentIntersectsRect, что и тест), но короче и глаже
+  function simplifyRoute(points, inflated) {
+    const clear = (a, b) => !inflated.some(r => segmentIntersectsRect(a, b, r));
+    const out = [points[0]];
+    let i = 0;
+    while (i < points.length - 1) {
+      let j = points.length - 1;
+      while (j > i + 1 && !clear(points[i], points[j])) j--;
+      out.push(points[j]);
+      i = j;
+    }
+    return out;
+  }
+  // главная точка входа: если прямая from→to уже свободна — она и есть маршрут; иначе прокладывает путь
+  // по сетке в обход препятствий и спрямляет его. Пустой/отсутствующий obstacles ⇒ прямая линия (легаси-темы).
+  function computeDogRoute(from, to, obstacles, margin) {
+    margin = margin == null ? DOG_ROUTE_MARGIN : margin;
+    const rects = obstacles || [];
+    if (!rects.length) return [from, to];
+    const inflated = rects.map(r => inflateRect(r, margin));
+    if (!inflated.some(r => segmentIntersectsRect(from, to, r))) return [from, to];
+    const cellPts = dogGridRoute(from, to, rects, margin);
+    if (!cellPts) return [from, to];
+    return simplifyRoute([from, ...cellPts, to], inflated);
+  }
+  // «начинать погоню?» — чистая функция для теста лимита частоты: дистанция меньше радиуса и с прошлой
+  // погони прошло не меньше кулдауна (lastChaseAt=-Infinity ⇒ погони ещё не было, кулдаун пройден сразу)
+  function dogShouldChase(now, lastChaseAt, dist) {
+    return dist < DOG_CHASE_RADIUS && (now - lastChaseAt) >= DOG_CHASE_COOLDOWN_MS;
+  }
+
+  function dogRestPoint() {
+    if (!agents.length) return catRandomPoint();
+    const a = agents[Math.floor(Math.random() * agents.length)];
+    const p = { x: a.home.x + (Math.random() < 0.5 ? -26 : 26), y: a.home.y + 14 };
+    return THEME_NAME === 'cyberpunk' ? pointOutsideObstacles(p, sceneObstacleRects()) : p;
+  }
+  function pickDogPlan() {
+    if (agents.length && Math.random() < 0.3) return { point: dogRestPoint(), kind: Math.random() < 0.5 ? 'sit' : 'lie' };
+    return { point: catRandomPoint(), kind: 'wander' };
+  }
+  const dog = {
+    x: 0, y: 0, target: null, route: [], plan: null, dir: 1, walking: false, running: false,
+    sitting: false, lying: false, restTimer: 0, phase: Math.random() * Math.PI * 2, bark: 0,
+    chasing: null, chaseApproach: null, chaseCooldownUntil: -Infinity, reactTo: null, wagTimer: 0,
+  };
+  function dogSetTarget(point) {
+    dog.target = point;
+    const from = { x: dog.x, y: dog.y };
+    dog.route = (THEME_NAME === 'cyberpunk' ? computeDogRoute(from, point, sceneObstacleRects()) : [from, point]).slice(1);
+  }
+  (function initDog() { const p = catRandomPoint(); dog.x = p.x; dog.y = p.y; dog.plan = pickDogPlan(); dogSetTarget(dog.plan.point); })();
+  // шаг к следующей путевой точке маршрута; возвращает true, когда маршрут пройден целиком (пёс на месте)
+  function dogAdvance(speed) {
+    if (!dog.route.length) { dog.walking = false; return true; }
+    const wp = dog.route[0];
+    const dx = wp.x - dog.x, dy = wp.y - dog.y, d = Math.hypot(dx, dy);
+    if (d < 1.5) { dog.x = wp.x; dog.y = wp.y; dog.route.shift(); dog.walking = dog.route.length > 0; return dog.route.length === 0; }
+    dog.x += dx / d * speed; dog.y += dy / d * speed; dog.dir = dx < 0 ? -1 : 1; dog.walking = true; return false;
+  }
+  // кот удирает от пса: если есть свободный стол — прыжок туда (та же механика, что и обычный визит на
+  // стол), иначе — просто убегает по полу в случайную дальнюю точку
+  function catFleeFromDog(cat) {
+    if (cat.jump || cat.onDesk) return;
+    cat.lying = false; cat.lieTimer = 0;
+    if (!cat.deskGoal) startCatDeskTrip(cat);
+    if (!cat.deskGoal) cat.target = catRandomPoint();
+  }
+  function nearestCat() {
+    let best = null, bestD = Infinity;
+    for (const cat of cats) { const d = ptDist(cat, dog); if (d < bestD) { bestD = d; best = cat; } }
+    return { cat: best, dist: bestD };
+  }
+  // реакция на task.review/task.done — подбегает к столу автора и виляет хвостом; вызывается из envelope()
+  function dogReactTo(name) {
+    const a = agents.find(x => x.name === name); if (!a) return;
+    dog.chasing = null; dog.chaseApproach = null; dog.sitting = false; dog.lying = false; dog.restTimer = 0;
+    dog.reactTo = name;
+    const p = { x: a.home.x + (Math.random() < 0.5 ? -22 : 22), y: a.home.y + 16 };
+    dogSetTarget(THEME_NAME === 'cyberpunk' ? pointOutsideObstacles(p, sceneObstacleRects()) : p);
+  }
+  function stepDog(t) {
+    if (dog.reactTo) {
+      dog.sitting = false; dog.lying = false;
+      if (dogAdvance(DOG_RUN_SPEED)) { dog.reactTo = null; dog.wagTimer = DOG_WAG_TICKS; dog.plan = pickDogPlan(); dogSetTarget(dog.plan.point); }
+    } else if (dog.restTimer > 0 || dog.sitting || dog.lying) {
+      dog.restTimer--;
+      if (dog.restTimer <= 0) { dog.sitting = false; dog.lying = false; dog.plan = pickDogPlan(); dogSetTarget(dog.plan.point); }
+    } else if (dog.chasing) {
+      const cat = dog.chasing;
+      if (cat.onDesk) {
+        // кот уже на столе — пёс должен добежать до подхода к нему, а не сесть мгновенно там, где стоял;
+        // цель ставим один раз (chaseApproach), дальше только продолжаем идти по уже проложенному маршруту
+        if (!dog.chaseApproach) { dog.chaseApproach = cat.deskApproach || { x: cat.x, y: cat.y }; dogSetTarget(dog.chaseApproach); }
+        if (dogAdvance(DOG_RUN_SPEED)) {
+          dog.chasing = null; dog.chaseApproach = null;
+          dog.sitting = true; dog.restTimer = DOG_REST_MIN + Math.random() * DOG_REST_RANGE; // садится под столом и «смотрит вверх»
+        }
+      } else {
+        dogSetTarget({ x: cat.x, y: cat.y }); // кот ещё бежит — пёс преследует его текущую позицию каждый кадр
+        dogAdvance(DOG_RUN_SPEED);
+        if (ptDist(cat, dog) < 8) { dog.chasing = null; dog.plan = pickDogPlan(); dogSetTarget(dog.plan.point); }
+      }
+    } else {
+      const { cat, dist } = nearestCat();
+      if (cat && dogShouldChase(t, dog.chaseCooldownUntil, dist)) {
+        dog.chaseCooldownUntil = t; dog.chasing = cat; catFleeFromDog(cat);
+      } else if (dogAdvance(dog.running ? DOG_RUN_SPEED : DOG_WALK_SPEED)) {
+        if (dog.plan.kind === 'wander') { dog.running = Math.random() < 0.3; dog.plan = pickDogPlan(); dogSetTarget(dog.plan.point); }
+        else { dog.sitting = dog.plan.kind === 'sit'; dog.lying = dog.plan.kind === 'lie'; dog.restTimer = DOG_REST_MIN + Math.random() * DOG_REST_RANGE; }
+      }
+    }
+    if (dog.wagTimer > 0) dog.wagTimer--;
+    if (dog.bark > 0) dog.bark--; else if (Math.random() < DOG_BARK_CHANCE) dog.bark = 70 + Math.random() * 50;
+  }
+
+  function drawDogNeon(x, y, t) {
+    const glow = 0.35 + 0.35 * Math.sin(t / 1100); // «схемы»-дорожки на теле — мигают медленно, как остальной неон сцены
+    o.globalAlpha = glow; o.fillStyle = CY.neonBlue;
+    o.fillRect(x + 6, y + 3, 8, 1); o.fillRect(x + 13, y + 3, 1, 4); o.fillRect(x + 15, y + 6, 7, 1);
+    o.fillRect(x + 5, y + 2, 2, 2); o.fillRect(x + 16, y + 5, 2, 2); o.fillRect(x + 21, y + 7, 2, 2);
+    o.globalAlpha = 1;
+    const cGlow = 0.5 + 0.5 * Math.sin(t / 650 + 0.8); // розовый огонёк ошейника
+    o.globalAlpha = cGlow; o.fillStyle = CY.neonPink; o.fillRect(x + 12, y + 8, 2, 2);
+    o.globalAlpha = 1;
+  }
+  function drawBarkBubble(entity, topY) {
+    const bw = 40, bh = 20;
+    const bx = Math.round(entity.x) - Math.round(bw / 2), by = topY - bh - 10;
+    o.fillStyle = '#1c2433'; o.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+    o.fillStyle = '#ffffff'; o.fillRect(bx, by, bw, bh);
+    const tipX = Math.round(entity.x) + (entity.dir === -1 ? -4 : 4);
+    o.fillRect(tipX - 4, by + bh, 8, 2); o.fillRect(tipX - 2, by + bh + 2, 4, 2); o.fillRect(tipX, by + bh + 4, 2, 2);
+    o.save();
+    o.font = '11px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'middle';
+    o.fillStyle = '#1c2433'; o.fillText('гав', bx + bw / 2, by + bh / 2 + 1);
+    o.restore();
+  }
+  function drawDog(t) {
+    const cyber = THEME_NAME === 'cyberpunk';
+    const colors = cyber ? DOG_COLORS_CYBER : DOG_COLORS_MONO;
+    let rows = DOG_STAND;
+    if (dog.lying) rows = DOG_LIE;
+    else if (dog.sitting) rows = DOG_SIT;
+    else if (dog.walking) rows = Math.floor(t / (dog.running ? 90 : 140)) % 2 ? DOG_WALK1 : DOG_WALK2;
+    const w = rows[0].length, h = rows.length;
+    const x = Math.round(dog.x) - Math.round(w / 2), y = Math.round(dog.y) - h;
+    o.fillStyle = 'rgba(0,0,0,0.25)'; o.fillRect(x + 2, y + h, Math.max(1, w - 4), 1);
+    if (!dog.lying) { // хвост: быстрое виляние 2с после события, иначе спокойная синусоида на ходу/стоя
+      const wag = dog.wagTimer > 0 ? (Math.floor(t / 90) % 3 - 1) * 3 : Math.sin(t / 260 + dog.phase) * 2.4;
+      const tailX = dog.dir === -1 ? x + w : x - 1, tailY = y + Math.round(h * 0.35 + wag);
+      o.fillStyle = colors.f; o.fillRect(tailX, tailY, 2, 4);
+    }
+    const draw = () => sprite(rows, x, y, colors);
+    if (dog.dir === -1) { o.save(); o.translate(x * 2 + w, 0); o.scale(-1, 1); draw(); o.restore(); } else draw();
+    if (cyber) drawDogNeon(x, y, t);
+    if (dog.bark > 0) drawBarkBubble(dog, y);
+  }
+  const PET_COUNT = cats.length + 1; // два кота + кибер-пёс
+
   // ---- старый рисованный этаж (arcade/gameboy) — та же геометрия, что и раньше, просто в мире 768×432
   function drawLegacyBackground() {
     for (let y = 120; y < LH; y += 24) for (let x = 0; x < LW; x += 24) {
@@ -673,6 +942,7 @@
     sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5)); // лежанка котов в углу
     // офисные коты, гуляющие по полу — до столов/подписей; коты в прыжке или уже на столе рисуются позже, поверх стола и человека
     drawCats(t, c => !c.jump && !c.onDesk);
+    drawDog(t); // кибер-пёс всегда на полу — под стол не запрыгивает, только гуляет/сидит/лежит рядом
     // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног;
     // на cyberpunk-сцене та же геометрия перекрашена в палитру CY (CYBER_DESK/CHAIR/MONITOR_COLORS) —
     // рабочие места агентов выглядят частью сцены, а не наложенным арт-стилем arcade/gameboy
@@ -838,6 +1108,7 @@
     if (!W) resize();
     for (const a of agents) { if (a.mail && --a.mail.life <= 0) a.mail = null; }
     for (const cat of cats) stepCat(cat);
+    stepDog(t);
     o.clearRect(0, 0, LW, LH);
     drawWorld(t);
     ctx.fillStyle = TH.floor2; ctx.fillRect(0, 0, W, H);
@@ -870,6 +1141,7 @@
     module.exports = {
       LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS,
       characterFor, CHAR_PALETTE, CHAR_HEADS, humanRows, DESK_FOOT, DESK_MIN_GAP,
+      PET_COUNT, segmentIntersectsRect, computeDogRoute, dogShouldChase, DOG_CHASE_RADIUS, DOG_CHASE_COOLDOWN_MS, DOG_ROUTE_MARGIN,
     };
   }
 })();
