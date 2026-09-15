@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from app import config
 from app.core import allure, scenarios, testlab, worktree
 from app.core.events import bus
-from app.core.office import Office
+from app.core.office import Office, build_summary
 from app.core.planner import ClaudePlanner, FakePlanner
 from app.core.roster import Roster
 from app.core.runner import ClaudeRunner, FakeRunner
@@ -141,6 +141,11 @@ async def state() -> dict:
     return snap
 
 
+@app.get("/api/summary")
+async def summary(since: str) -> dict:
+    return build_summary(office.store, since)
+
+
 class TaskIn(BaseModel):
     title: str
     prompt: str
@@ -197,6 +202,17 @@ async def reject(task_id: str, body: Reason) -> dict:
 async def retry(task_id: str, body: Reason) -> dict:
     if not await office.retry(task_id, body.text):
         raise HTTPException(400, "повторить можно только отклонённую или упавшую")
+    return {"ok": True}
+
+
+class Note(BaseModel):
+    text: str
+
+
+@app.post("/api/tasks/{task_id}/note")
+async def note(task_id: str, body: Note) -> dict:
+    if not await office.add_note(task_id, body.text):
+        raise HTTPException(400, "дописать можно только работающей задаче")
     return {"ok": True}
 
 

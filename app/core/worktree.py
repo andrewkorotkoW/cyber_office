@@ -97,6 +97,16 @@ async def diff_full(repo: str, branch: str, limit: int = 200_000) -> str:
     return out[:limit] + ("\n…(обрезано)" if len(out) > limit else "")
 
 
+async def head_sha(repo: str) -> str:
+    _, out = await _git(repo, "rev-parse", "HEAD")
+    return out
+
+
+async def diff_merge_commit(repo: str, commit: str, limit: int = 200_000) -> str:
+    _, out = await _git(repo, "diff", f"{commit}^1", commit)
+    return out[:limit] + ("\n…(обрезано)" if len(out) > limit else "")
+
+
 async def merge(repo: str, branch: str, message: str) -> tuple[bool, str]:
     """Вливает ветку агента в main без fast-forward, чтобы задача была видна в истории."""
     base = await default_branch(repo)

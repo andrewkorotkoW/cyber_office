@@ -57,6 +57,8 @@ class Task:
     overlap_files: list[str] = field(default_factory=list)   # файлы, изменённые и в main, и в ветке
     auto_retries: int = 0                       # сколько раз офис уже сам перезапускал задачу подряд из-за сбоя API
     auto_retry_at: str | None = None            # когда сработает следующий автоповтор (None — не запланирован)
+    merge_commit: str | None = None             # sha коммита мерджа в main (для diff после done, когда worktree уже удалён)
+    pending_notes: list[str] = field(default_factory=list)   # заметки, присланные пока задача ещё running
 
     def touch(self) -> None:
         self.updated_at = datetime.now().isoformat(timespec="seconds")
