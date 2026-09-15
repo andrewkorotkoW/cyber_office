@@ -27,6 +27,7 @@ function md(text) {
 const summary = (text, n = 150) => { const t = String(text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n).trim() + '…' : t; };
 const MAX_AUTO_RETRIES = 3;
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } };
+const fmtTimeSec = (ts) => { try { return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); } catch (e) { return ''; } };
 const costLabel = (usd) => usd ? ` · ≈$${usd.toFixed(2)} по API` : '';
 const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n }).title.split('·')[0].trim();
 // круглый аватар-портрет агента (лента событий, карточки задач, шапка миссии) — пусто, если у агента нет avatar
@@ -101,10 +102,43 @@ function renderMissions() {
     d.innerHTML = `<div class="g">${avatarImg('michael', 24)}🎯 ${esc(m.goal.slice(0, 90))}</div>
       <div class="s">${MISSION_RU[m.status] || m.status}${m.summary ? ' · ' + esc(m.summary) : ''}${m.error ? ' · ' + esc(m.error) : ''} · ${done}/${ts.length}${m.cost_usd ? ' · $' + m.cost_usd.toFixed(2) : ''}
         <button class="small" style="float:right" data-del="${m.id}">✕</button></div>
-      <div class="bar"><i style="width:${ts.length ? Math.round(done / ts.length * 100) : 0}%"></i></div>`;
+      <div class="bar"><i style="width:${ts.length ? Math.round(done / ts.length * 100) : 0}%"></i></div>
+      ${renderMissionGraph(ts)}`;
     d.querySelector('[data-del]').addEventListener('click', async (e) => { e.stopPropagation(); if (!(await uiConfirm('Удалить миссию и все её задачи?'))) return; try { await api(`/api/missions/${m.id}`, 'DELETE'); await loadState(); } catch (err) { alert(err.message); } });
+    d.querySelectorAll('.graph-node').forEach(el => el.addEventListener('click', (e) => { e.stopPropagation(); openTask(el.dataset.task); }));
     box.appendChild(d);
   }
+}
+
+// SVG-граф подзадач миссии: слои считает Graph.computeGraphLayout (ui/graph.js, тестируется отдельно),
+// здесь только разметка узлов (аватар агента + название, цвет по статусу) и рёбер depends_on.
+function renderMissionGraph(tasks) {
+  if (!tasks.length || !window.Graph) return '';
+  const nodes = Graph.computeGraphLayout(tasks.map(t => ({ id: t.id, depends_on: t.depends_on })));
+  const pos = new Map(nodes.map(n => [n.id, n]));
+  const byId = new Map(tasks.map(t => [t.id, t]));
+  const NW = 132, NH = 56, PAD = 14;
+  const maxLayer = nodes.reduce((mx, n) => Math.max(mx, n.layer), 0);
+  const rowsByLayer = {}; for (const n of nodes) rowsByLayer[n.layer] = (rowsByLayer[n.layer] || 0) + 1;
+  const maxRows = Math.max(1, ...Object.values(rowsByLayer));
+  const W = PAD * 2 + maxLayer * Graph.STEP_X + NW;
+  const H = PAD * 2 + (maxRows - 1) * Graph.STEP_Y + NH;
+  const left = (n) => PAD + n.x, right = (n) => PAD + n.x + NW, midY = (n) => PAD + n.y + NH / 2;
+  const edges = [];
+  for (const t of tasks) for (const dep of (t.depends_on || [])) {
+    const a = pos.get(dep), b = pos.get(t.id); if (!a || !b) continue;
+    edges.push(`<line class="graph-edge" x1="${right(a)}" y1="${midY(a)}" x2="${left(b)}" y2="${midY(b)}"></line>`);
+  }
+  const nodesHtml = nodes.map(n => {
+    const t = byId.get(n.id); if (!t) return '';
+    const x = PAD + n.x, y = PAD + n.y, color = STATUS_COLOR[t.status] || STATUS_COLOR.todo;
+    return `<g class="graph-node ${t.status}" data-task="${t.id}" transform="translate(${x},${y})"><title>${esc(t.title)}</title>
+      <rect class="node-bg" width="${NW}" height="${NH}" rx="6" fill="${color}22" stroke="${color}"></rect>
+      <foreignObject width="${NW}" height="${NH}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;align-items:center;gap:6px;height:100%;padding:0 8px;box-sizing:border-box;overflow:hidden">
+        ${avatarImg(t.agent, 22)}<span style="font-size:10.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--text)">${esc(t.title)}</span>
+      </div></foreignObject></g>`;
+  }).join('');
+  return `<div class="mission-graph"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges.join('')}${nodesHtml}</svg></div>`;
 }
 
 function buildCard(t) {
@@ -204,11 +238,13 @@ function renderPlanerkaEvents() {
   }
 }
 
-async function action(t, act) {
+// presetText — уже готовый текст (например, из поля «дописать агенту» в карточке задачи);
+// если не передан, спрашиваем через uiPrompt как раньше.
+async function action(t, act, presetText) {
   try {
     if (act === 'approve') { await api(`/api/tasks/${t.id}/approve`, 'POST'); }
-    if (act === 'reject') { const text = (await uiPrompt('Почему отклоняешь? (пойдёт агенту при повторе)')) ?? ''; await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
-    if (act === 'retry') { const text = (await uiPrompt('Уточнение для агента (можно пусто)')) ?? ''; await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
+    if (act === 'reject') { const text = presetText != null ? presetText : ((await uiPrompt('Почему отклоняешь? (пойдёт агенту при повторе)')) ?? ''); await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
+    if (act === 'retry') { const text = presetText != null ? presetText : ((await uiPrompt('Уточнение для агента (можно пусто)')) ?? ''); await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
     if (act === 'delete') { await api(`/api/tasks/${t.id}`, 'DELETE'); }
     await loadState(); $('#dlg-task').close();
   } catch (e) { alert(e.message); }
@@ -224,50 +260,146 @@ function colorDiff(d) {
   }).join('\n');
 }
 
+// diff --git a/X b/Y режет unified diff на блоки по файлам — для дерева файлов слева во вкладке «Дифф».
+function splitDiffFiles(diffText) {
+  if (!diffText) return [];
+  const files = [];
+  for (const line of diffText.split('\n')) {
+    const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (m) files.push({ name: m[2] || m[1], lines: [line] });
+    else if (files.length) files[files.length - 1].lines.push(line);
+  }
+  return files;
+}
+function renderDiffTab(diffText) {
+  const tree = $('#t-diff-tree'), panel = $('#t-diff-panel'); if (!tree || !panel) return;
+  const files = splitDiffFiles(diffText);
+  if (!files.length) { tree.innerHTML = '<div class="log">Нет изменений.</div>'; panel.innerHTML = ''; return; }
+  tree.innerHTML = files.map((f, i) => `<div class="diff-file-row" data-i="${i}">${esc(f.name)}</div>`).join('');
+  panel.innerHTML = files.map((f, i) => `<div class="diff-block" id="t-diff-block-${i}"><pre class="diff">${colorDiff(f.lines.join('\n'))}</pre></div>`).join('');
+  tree.querySelectorAll('.diff-file-row').forEach(el => el.addEventListener('click', () => {
+    const block = document.getElementById(`t-diff-block-${el.dataset.i}`); if (!block) return;
+    block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    block.classList.add('flash'); setTimeout(() => block.classList.remove('flash'), 900);
+  }));
+}
+
+// события ленты (agent.tool/text/state, run.output/state) -> {cls, text} для строки лога;
+// прочие события (task.updated и т.п.) в карточке задачи не показываем.
+function eventLine(ev) {
+  if (ev.kind === 'agent.tool') return { cls: 'tool', text: '⚙ ' + ev.data.summary };
+  if (ev.kind === 'agent.text') return { cls: 'text', text: ev.data.text };
+  if (ev.kind === 'agent.state') return { cls: 'state', text: '■ ' + ev.data.state };
+  if (ev.kind === 'run.output') return { cls: 'text', text: ev.data.line };
+  if (ev.kind === 'run.state') return { cls: 'state', text: '■ ' + ev.data.state };
+  return null;
+}
+function termAppend(box, ev) {
+  const line = eventLine(ev); if (!line) return;
+  const d = document.createElement('div'); d.className = 'line ' + line.cls;
+  d.innerHTML = `<span class="plk-ev-time">${esc(fmtTimeSec(ev.ts))}</span>${esc(line.text)}`;
+  box.appendChild(d);
+  while (box.children.length > 400) box.firstChild.remove();
+}
+// вкладка «Лог»: t.log (короткая хроника) + полная лента событий задачи, слитые в один список по времени.
+function renderMergedLog(t, evs) {
+  const box = $('#t-log-merged'); if (!box) return;
+  const rows = [];
+  for (const line of t.log) {
+    const m = line.match(/^(\d{2}:\d{2}:\d{2})\s([\s\S]*)$/);
+    rows.push({ time: m ? m[1] : '', text: m ? m[2] : line, cls: 'state' });
+  }
+  for (const ev of evs) { const line = eventLine(ev); if (line) rows.push({ time: fmtTimeSec(ev.ts), text: line.text, cls: line.cls }); }
+  rows.sort((a, b) => a.time.localeCompare(b.time));
+  box.innerHTML = rows.length ? rows.map(r => `<div class="line ${r.cls}"><span class="plk-ev-time">${esc(r.time)}</span>${esc(r.text)}</div>`).join('') : '<div class="log">Пока пусто.</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function copyTaskId(id) {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('no clipboard api');
+    await navigator.clipboard.writeText(id);
+  } catch (e) { uiAlert(id); }
+}
+
 async function openTask(id) {
   const t = STATE.tasks.find(x => x.id === id); if (!t) return;
   $('#t-title').textContent = t.title;
   const body = $('#t-body');
-  body.innerHTML = `<span class="tag">${esc(agentTitle(t.agent))}</span><span class="tag">${STATUS_RU[t.status]}</span><span class="tag">${esc(t.repo)}</span>${t.branch ? `<span class="tag">${esc(t.branch)}</span>` : ''}
-    <label>Описание</label><div class="log" style="color:#d7dce3">${esc(t.prompt)}</div>
-    ${t.status === 'failed' && t.error ? `<label>Причина</label><div class="log">⚠️ ${esc(t.error)}</div>` : ''}
-    ${t.status === 'failed' && t.auto_retry_at ? `<div class="log">🔁 автоповтор ${t.auto_retries}/${MAX_AUTO_RETRIES} в ${fmtTime(t.auto_retry_at)}</div>` : ''}
-    ${t.result ? `<label>Ответ агента</label><div class="answer">${md(t.result)}</div>` : ''}
-    ${t.cost_usd ? `<div class="log">Расход: ≈$${t.cost_usd.toFixed(2)} по тарифу API · ${t.turns} ходов · подписка Max, деньги не списываются</div>` : ''}
-    ${t.diff_stat ? `<label>Изменения</label><div class="log">${esc(t.diff_stat)}</div>` : ''}
-    <div id="t-diff"></div>
-    <label>Терминал агента ${t.status === 'running' ? '· live' : ''}</label><div class="term" id="t-term"></div>
-    <label>Хроника</label><div class="log">${esc(t.log.join('\n'))}</div>
+  // review не участвует: office.retry() принимает только rejected/failed (см. app/core/office.py),
+  // а у review уже есть свой путь — одобрить/отклонить с комментарием.
+  const noteApplicable = ['running', 'failed', 'rejected'].includes(t.status);
+  body.innerHTML = `<span class="tag">${esc(agentTitle(t.agent))}</span><span class="tag">${STATUS_RU[t.status]}</span><span class="tag">${esc(t.repo)}</span>${t.branch ? `<span class="tag">${esc(t.branch)}</span>` : ''}${t.cost_usd ? `<span class="tag">≈$${t.cost_usd.toFixed(2)} · ${t.turns} ходов</span>` : ''}
+    <div class="tabs" id="t-tabs">
+      <button data-tab="summary" class="on">Резюме</button>
+      <button data-tab="diff">Дифф</button>
+      <button data-tab="log">Лог</button>
+      <button data-tab="prompt">Промпт</button>
+    </div>
+    <div style="clear:both"></div>
+    <div class="tab-panel" id="tp-summary">
+      ${t.result ? `<div class="answer">${md(t.result)}</div>` : '<div class="log">Ответа пока нет.</div>'}
+      ${t.status === 'failed' && t.error ? `<label>Причина</label><div class="log">⚠️ ${esc(t.error)}</div>` : ''}
+      ${t.status === 'failed' && t.auto_retry_at ? `<div class="log">🔁 автоповтор ${t.auto_retries}/${MAX_AUTO_RETRIES} в ${fmtTime(t.auto_retry_at)}</div>` : ''}
+    </div>
+    <div class="tab-panel" id="tp-diff" hidden>
+      ${t.diff_stat ? `<div class="log" style="margin-bottom:8px">${esc(t.diff_stat)}</div>` : ''}
+      <div class="diff-layout"><div class="diff-tree" id="t-diff-tree"><div class="log">Загрузка…</div></div><div class="diff-panel" id="t-diff-panel"></div></div>
+    </div>
+    <div class="tab-panel" id="tp-log" hidden><div class="term" id="t-log-merged" style="max-height:56vh"><div class="log">Загрузка…</div></div></div>
+    <div class="tab-panel" id="tp-prompt" hidden><div class="log" style="color:#d7dce3;white-space:pre-wrap">${esc(t.prompt)}</div></div>
+    ${noteApplicable ? `<div class="note-box">
+      <label>✍️ Дописать агенту</label>
+      <textarea id="t-note-input" placeholder="${t.status === 'running' ? 'Увидит на следующем шаге' : 'Уточнение для повтора'}"></textarea>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:6px"><span class="log msg" id="t-note-msg" hidden></span><button class="primary" id="t-note-send">Отправить</button></div>
+    </div>` : ''}
     <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end" id="t-actions"></div>`;
+
+  document.querySelectorAll('#t-tabs button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#t-tabs button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('#t-body .tab-panel').forEach(p => p.hidden = p.id !== `tp-${b.dataset.tab}`);
+  }));
+
   const acts = $('#t-actions');
-  if (t.status === 'review') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'reject')">Отклонить</button><button class="ok" onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'approve')">Одобрить и влить в main</button>`;
-  if (t.status === 'rejected' || t.status === 'failed') acts.innerHTML = `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'retry')">Повторить с уточнением</button>`;
+  let actsHtml = '';
+  if (t.status === 'review') actsHtml += `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'reject')">Отклонить</button><button class="ok" onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'approve')">Одобрить и влить в main</button>`;
+  if (t.status === 'rejected' || t.status === 'failed') actsHtml += `<button onclick="action(STATE.tasks.find(x=>x.id==='${t.id}'),'retry')">Повторить с уточнением</button>`;
+  actsHtml += `<button id="t-copy-id">Скопировать id</button><button id="t-delete">Удалить</button>`;
+  acts.innerHTML = actsHtml;
+  $('#t-copy-id').addEventListener('click', () => copyTaskId(t.id));
+  $('#t-delete').addEventListener('click', () => action(STATE.tasks.find(x => x.id === t.id) || t, 'delete'));
+  const noteBtn = $('#t-note-send');
+  if (noteBtn) noteBtn.addEventListener('click', async () => {
+    const input = $('#t-note-input'), text = input.value.trim(); if (!text) return;
+    const fresh = STATE.tasks.find(x => x.id === t.id) || t;
+    try {
+      if (fresh.status === 'running') {
+        await api(`/api/tasks/${t.id}/note`, 'POST', { text });
+        input.value = '';
+        const msg = $('#t-note-msg'); if (msg) { msg.textContent = 'Будет учтено при повторе.'; msg.hidden = false; }
+      } else {
+        await action(fresh, 'retry', text);
+      }
+    } catch (e) { alert(e.message); }
+  });
+
   $('#dlg-task').showModal();
   OPEN_TASK = t.id;
+  const logBox = $('#t-log-merged'); if (logBox) logBox.innerHTML = '';
+
   const evs = await api(`/api/tasks/${t.id}/events`);
-  const termBox = $('#t-term'); termBox.innerHTML = '';
-  for (const ev of evs) termAppend(termBox, ev);
-  termBox.scrollTop = termBox.scrollHeight;
-  if (t.branch && (t.status === 'review' || t.status === 'failed')) {
-    const { diff } = await api(`/api/tasks/${t.id}/diff`);
-    $('#t-diff').innerHTML = `<label>Diff к main</label><pre class="diff">${diff ? colorDiff(diff) : '(пусто)'}</pre>`;
+  renderMergedLog(t, evs);
+
+  if (t.status === 'review' || t.status === 'failed' || t.status === 'done') {
+    let diff = ''; try { ({ diff } = await api(`/api/tasks/${t.id}/diff`)); } catch (e) {}
+    renderDiffTab(diff);
+  } else {
+    $('#t-diff-tree').innerHTML = '<div class="log">Появится после ревью.</div>'; $('#t-diff-panel').innerHTML = '';
   }
 }
 
 let OPEN_TASK = null;
 $('#dlg-task').addEventListener('close', () => { OPEN_TASK = null; });
-function termAppend(box, ev) {
-  let cls, text;
-  if (ev.kind === 'agent.tool') { cls = 'tool'; text = '⚙ ' + ev.data.summary; }
-  else if (ev.kind === 'agent.text') { cls = 'text'; text = ev.data.text; }
-  else if (ev.kind === 'agent.state') { cls = 'state'; text = '■ ' + ev.data.state; }
-  else if (ev.kind === 'run.output') { cls = 'text'; text = ev.data.line; }
-  else if (ev.kind === 'run.state') { cls = 'state'; text = '■ ' + ev.data.state; }
-  else return;
-  const d = document.createElement('div'); d.className = 'line ' + cls;
-  d.textContent = text; box.appendChild(d);
-  while (box.children.length > 400) box.firstChild.remove();
-}
 
 function fillForm() {
   $('#f-agent').innerHTML = STATE.agents.map(a => `<option value="${a.name}">${esc(a.title)}</option>`).join('');
@@ -342,7 +474,7 @@ function connect() {
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
   ws.onmessage = (m) => {
     const ev = JSON.parse(m.data); const who = ev.agent ? agentTitle(ev.agent) : 'офис';
-    if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-term'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
+    if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-log-merged'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
     if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary, ev.agent, ev.data.task && ev.data.task.repo);
     else if (ev.kind === 'agent.text') { AGENT_LAST_TEXT[ev.agent] = ev.data.text; termLine('text', who, ev.data.text, ev.agent); renderPlanerkaRunning(); }
     else if (ev.kind === 'agent.state') { const ag = STATE.agents.find(a => a.name === ev.agent); if (ag) ag.state = ev.data.state; updateModeBusy(); Floor.setState(ev.agent, ev.data.state); termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state, ev.agent); }

@@ -162,8 +162,31 @@ input, textarea, select { width:100%; background:var(--bg); color:var(--text); b
 input:focus, textarea:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:3px 3px 0 var(--accent) }
 textarea { min-height:120px; resize:vertical }
 .row { display:flex; gap:10px } .row > * { flex:1 }
-pre.diff { font:12px/1.45 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:10px; overflow:auto; max-height:52vh; white-space:pre }
+pre.diff { font:12px/1.45 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:10px; overflow:auto; max-height:52vh; white-space:pre-wrap; word-break:break-all }
 pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff .hunk { color:var(--blue) } pre.diff .file { color:var(--warn); font-weight:600 }
+
+/* карточка задачи: вкладки Резюме/Дифф/Лог/Промпт (.tabs — общий стиль вкладок, см. ниже и мобильный блок) */
+.tab-panel[hidden] { display:none }
+.diff-layout { display:flex; gap:10px }
+.diff-tree { flex:0 0 220px; overflow:auto; max-height:52vh; border:2px solid var(--line); background:var(--bg) }
+.diff-file-row { padding:5px 8px; font-size:12px; cursor:pointer; border-bottom:1px dashed var(--line); word-break:break-all }
+.diff-file-row:hover { background:var(--card); color:var(--accent) }
+.diff-panel { flex:1; min-width:0; overflow:auto; max-height:52vh }
+.diff-block { margin-bottom:4px }
+.diff-block pre.diff { transition:box-shadow .2s }
+.diff-block.flash pre.diff { box-shadow:0 0 0 2px var(--accent) }
+.note-box { margin-top:14px; border-top:2px dashed var(--line); padding-top:10px }
+.note-box textarea { min-height:64px }
+.note-box .msg { color:var(--ok); font-size:12px }
+
+/* граф миссии: слои считает Graph.computeGraphLayout (ui/graph.js), тут только разметка узлов/рёбер */
+.mission-graph { margin-top:8px; overflow:auto; border:2px solid var(--line); background:var(--bg) }
+.mission-graph svg { display:block }
+.graph-node { cursor:pointer }
+.graph-node:hover .node-bg { filter:brightness(1.3) }
+.graph-edge { stroke:var(--mute); stroke-width:2 }
+.graph-node.running .node-bg { animation:graph-pulse 1.3s ease-in-out infinite }
+@keyframes graph-pulse { 0%,100% { opacity:1 } 50% { opacity:.5 } }
 .log { font-size:12px; color:var(--mute); white-space:pre-wrap }
 .tag { display:inline-block; font-size:11px; padding:1px 7px; border:2px solid var(--line); color:var(--mute); margin-right:4px }
 #missions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px }
@@ -283,6 +306,11 @@ header { padding-top:max(10px, env(safe-area-inset-top)); padding-left:max(16px,
   /* тесты: дерево и лог друг под другом */
   .tests-layout { display:block; height:auto }
   .tests-tree, .tests-side { max-height:50vh; overflow:auto; margin-bottom:12px }
+
+  /* карточка задачи: дерево файлов диффа над самим диффом, а не рядом */
+  .diff-layout { display:block }
+  .diff-tree { max-height:26vh; margin-bottom:8px }
+  .diff-panel { max-height:none }
 
   /* диалоги — во весь экран, крупные поля, sticky-кнопки над клавиатурой */
   dialog { width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; margin:0; inset:0; box-shadow:none; border-width:0 }
