@@ -145,7 +145,11 @@ class Office:
     # ------------------------------------------------------------ ревью
     async def diff(self, task_id: str) -> str:
         t = self.store.get(task_id)
-        if not t or not t.branch:
+        if not t:
+            return ""
+        if t.status == "done" and t.merge_commit:
+            return await worktree.diff_merge_commit(t.repo, t.merge_commit)
+        if not t.branch:
             return ""
         return await worktree.diff_full(t.repo, t.branch)
 
@@ -155,6 +159,7 @@ class Office:
             return False, "задача не на ревью"
         ok, out = await worktree.merge(t.repo, t.branch, f"{t.agent}: {t.title} (#{t.id})")
         if ok:
+            t.merge_commit = await worktree.head_sha(t.repo)
             await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
             t.status = "done"; t.note("одобрено, влито в main")
         else:
@@ -208,12 +213,27 @@ class Office:
                          f"или вручную), разреши конфликты в пользу актуального {base} и снова прогони тесты.")
         if extra:
             t.prompt += f"\n\nУточнение от ревьюера: {extra}"
+        if t.pending_notes:
+            t.prompt += "\n\nДополнения, присланные пока агент работал:\n" + "\n".join(f"- {n}" for n in t.pending_notes)
+            t.pending_notes = []
         t.status, t.branch, t.worktree, t.result, t.diff_stat = "todo", None, None, None, None
         t.behind_main, t.overlap_files = 0, []
         t.error, t.auto_retry_at = None, None   # auto_retries не сбрасываем — это счётчик подряд идущих сбоев API
         t.note("отправлена заново"); self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         self.kick(t.agent)
+        return True
+
+    async def add_note(self, task_id: str, text: str) -> bool:
+        """Дописать уточнение к задаче, которая ещё в работе — агент увидит его при следующем retry."""
+        t = self.store.get(task_id)
+        if not t or t.status != "running":
+            return False
+        t.note(f"✍️ дописано: {text}")
+        t.pending_notes.append(text)
+        del t.pending_notes[:-20]
+        self.store.update(t)
+        await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         return True
 
     # ------------------------------------------------------------ миссии
@@ -278,3 +298,19 @@ class Office:
 
 def _pub(t: Task) -> dict:
     d = asdict(t); d["prompt"] = d["prompt"][:2000]; return d
+
+
+def build_summary(store: TaskStore, since: str) -> dict:
+    """done_tasks/cost_usd — по updated_at задач; done_missions — по максимуму updated_at
+    среди задач миссии (у Mission нет собственной метки завершения)."""
+    tasks_since = [t for t in store.tasks.values() if t.updated_at[:10] >= since]
+    done_tasks = sum(1 for t in tasks_since if t.status == "done")
+    cost_usd = sum(t.cost_usd for t in tasks_since)
+    done_missions = 0
+    for m in store.missions.values():
+        if m.status != "done":
+            continue
+        mt = store.mission_tasks(m.id)
+        if mt and max(t.updated_at for t in mt)[:10] >= since:
+            done_missions += 1
+    return {"since": since, "done_tasks": done_tasks, "done_missions": done_missions, "cost_usd": cost_usd}
