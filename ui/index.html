@@ -13,6 +13,7 @@
   <h1 class="neon">cyber_office</h1>
   <img src="ui/assets/team.png" alt="команда" class="team-strip" title="Команда">
   <span id="mode" class="mode">…</span>
+  <button id="btn-notify" class="small notify-bell" aria-label="Уведомления" title="Уведомления">🔔<span id="notify-badge" class="badge" hidden>0</span></button>
   <span class="spacer"></span>
   <button id="btn-menu" class="small burger" aria-label="Меню" aria-expanded="false">☰</button>
   <div class="header-menu" id="header-menu">
@@ -26,7 +27,7 @@
       <button data-theme="arcade">Аркада</button><button data-theme="gameboy">Game Boy</button><button data-theme="cyberpunk">Кибер</button>
     </div>
     <div class="view-switch" id="view-switch">
-      <button data-view="office" class="on">🏢 Офис</button><button data-view="tests">🧪 Тесты</button>
+      <button data-view="planerka" class="on">📋 Планёрка</button><button data-view="office">🏢 Офис</button><button data-view="tests">🧪 Тесты</button>
     </div>
     <button id="btn-repo" class="small">＋ репозиторий</button>
     <button id="btn-new">＋ Задача</button>
@@ -34,9 +35,25 @@
   </div>
 </header>
 <main>
+  <aside id="projects" class="panel projects">
+    <h2>Проекты <button id="btn-projects-add" class="small" title="Добавить репозиторий">＋</button></h2>
+    <div class="body">
+      <select id="projects-select" class="projects-select"></select>
+      <div id="projects-list" class="projects-list"></div>
+    </div>
+  </aside>
+  <div class="view-content">
+  <section id="view-planerka" class="planerka">
+    <div class="planerka-grid">
+      <section class="panel plk-block"><h2>Ждёт тебя</h2><div class="body" id="plk-waiting-body"></div></section>
+      <section class="panel plk-block"><h2>Сейчас в работе</h2><div class="body" id="plk-running-body"></div></section>
+      <section class="panel plk-block"><h2>За сегодня</h2><div class="body" id="plk-today-body"></div></section>
+      <section class="panel plk-block"><h2>Последние события</h2><div class="body" id="plk-events-body"></div></section>
+    </div>
+  </section>
   <section id="floor" class="panel"><h2>Офис <button id="btn-floor-toggle" class="small floor-toggle">▼ показать офис</button></h2><div class="body"><canvas id="floor-canvas"></canvas></div></section>
   <section id="terminal" class="panel"><h2>Лента агентов</h2><div class="body" id="term"></div></section>
-  <section id="board" class="panel"><h2>Задачи <span id="repo-tabs" class="tabs"></span></h2><div class="body"><div id="missions"></div>
+  <section id="board" class="panel"><h2>Задачи</h2><div class="body"><div id="missions"></div>
     <div class="board-tabs" id="board-tabs">
       <button class="board-tab on" data-col="todo">Очередь <span id="tab-n-todo"></span></button>
       <button class="board-tab" data-col="running">В работе <span id="tab-n-running"></span></button>
@@ -49,7 +66,7 @@
     <div class="col" data-col="review"><h3>На ревью <span id="n-review"></span></h3></div>
     <div class="col" data-col="done"><h3>Готово / отклонено <span id="n-done"></span></h3></div>
   </div></div></section>
-  <section id="tests-view" class="panel"><h2>Тесты <span id="tests-repo-tabs" class="tabs"></span></h2><div class="body">
+  <section id="tests-view" class="panel"><h2>Тесты</h2><div class="body">
     <div class="tests-toolbar">
       <button id="btn-tests-refresh" class="small">↻ Обновить дерево</button>
       <button id="btn-tests-run-all" class="primary">▶ Запустить всё</button>
@@ -74,7 +91,15 @@
       </div>
     </div>
   </div></section>
+  </div>
 </main>
+
+<dialog id="dlg-notify" class="wide">
+  <div class="head"><h3>Уведомления</h3>
+    <button id="btn-notify-read-all" class="small">Прочитать всё</button>
+    <button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content" id="notify-list"></div>
+</dialog>
 
 <dialog id="dlg-ask" class="ask">
   <div class="ask-body">
