@@ -34,24 +34,54 @@ const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n })
 const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name === n); return a && a.avatar ? `<img class="avatar${a.state && a.state !== 'idle' ? ' busy' : ''}" data-agent="${esc(a.name)}" style="--ac:${esc(a.color || '#ff4fa3')}" width="${size}" height="${size}" src="/ui/assets/portraits/${esc(a.avatar)}" alt="">` : ''; };
 
 
+// живые портреты в диалогах (ui/portrait_anim.js): моргание/речь/эмоции; #dlg-task и лента не трогаем — там
+// портретов много, анимация замельтешит. PORTRAITS хранит инстансы, чтобы останавливать таймеры при close().
+const PORTRAITS = {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ERROR_TEXT_RE = /ошибк|error|failed|не удал/i;
+// печать сообщения ask-диалога посимвольно (~18мс/символ), клик — пропустить; возвращает Promise<void>
+function typeAskMessage(el, text, msPerChar = 18) {
+  return new Promise((resolve) => {
+    el.textContent = '';
+    const s = String(text ?? '');
+    if (!s) { resolve(); return; }
+    let i = 0, done = false;
+    const finish = () => { if (done) return; done = true; el.textContent = s; el.removeEventListener('click', skip); resolve(); };
+    const skip = () => finish();
+    el.addEventListener('click', skip);
+    const step = () => {
+      if (done) return;
+      i++; el.textContent = s.slice(0, i);
+      if (i >= s.length) finish(); else setTimeout(step, msPerChar);
+    };
+    step();
+  });
+}
+
 // Свой диалог вместо системных prompt/confirm/alert (у системных — чужой шрифт и питоновская ракета).
 function uiAsk(message, { input = false, placeholder = '', ok = 'OK', cancel = 'Отмена', cancelable = true } = {}) {
   return new Promise((resolve) => {
     const d = document.getElementById('dlg-ask'); if (!d || !d.showModal) { resolve(input ? prompt(message) : confirm(message)); return; }
     const msg = d.querySelector('#ask-msg'), inp = d.querySelector('#ask-input'), bOk = d.querySelector('#ask-ok'), bCancel = d.querySelector('#ask-cancel');
-    msg.textContent = message; inp.hidden = !input; inp.value = ''; inp.placeholder = placeholder; bOk.textContent = ok; bCancel.textContent = cancel; bCancel.hidden = !cancelable;
+    inp.hidden = !input; inp.value = ''; inp.placeholder = placeholder; bOk.textContent = ok; bCancel.textContent = cancel; bCancel.hidden = !cancelable;
     const done = (v) => { d.close(); bOk.onclick = bCancel.onclick = null; inp.onkeydown = null; d.oncancel = null; resolve(v); };
     bOk.onclick = () => done(input ? inp.value : true);
     bCancel.onclick = () => done(input ? null : false);
     inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); bOk.click(); } };
     d.oncancel = (e) => { e.preventDefault(); done(input ? null : false); };
     d.showModal(); if (input) inp.focus(); else bOk.focus();
+    const pam = window.LivePortrait ? (PORTRAITS.pam = window.LivePortrait.mount(document.getElementById('ask-avatar'), 'pink.png')) : null;
+    if (pam) pam.mood(ERROR_TEXT_RE.test(String(message ?? '')) ? 'worried' : 'neutral');
+    const typingMs = Math.max(300, String(message ?? '').length * 18);
+    if (pam) pam.talk(typingMs);
+    typeAskMessage(msg, message).then(() => { if (pam) pam.talk(0); });
   });
 }
 const uiPrompt = (message, placeholder = '') => uiAsk(message, { input: true, placeholder });
 const uiConfirm = (message) => uiAsk(message, { ok: 'Да', cancel: 'Нет' });
 const uiAlert = (message) => uiAsk(message, { ok: 'Понятно', cancelable: false });
 window.alert = (m) => { uiAlert(String(m)); };
+document.getElementById('dlg-ask')?.addEventListener('close', () => PORTRAITS.pam?.stop());
 
 async function loadState() {
   STATE = await api('/api/state');
@@ -408,18 +438,32 @@ function fillForm() {
   if (REPO_FILTER) { $('#f-repo').value = REPO_FILTER; $('#m-repo').value = REPO_FILTER; }
 }
 
-$('#btn-new').addEventListener('click', () => { $('#dlg-new').showModal(); syncAgentAvatar(); });
+function mountHeadPortrait(key, elId, file) {
+  if (!window.LivePortrait) return null;
+  const inst = window.LivePortrait.mount(document.getElementById(elId), file);
+  PORTRAITS[key] = inst;
+  if (inst) inst.talk(1800 + Math.random() * 700);
+  return inst;
+}
+document.getElementById('dlg-new')?.addEventListener('close', () => { PORTRAITS.dwight?.stop(); PORTRAITS.pick?.stop(); });
+document.getElementById('dlg-mission')?.addEventListener('close', () => PORTRAITS.michael?.stop());
+
+$('#btn-new').addEventListener('click', () => { $('#dlg-new').showModal(); mountHeadPortrait('dwight', 'new-avatar', 'cyborg.png'); syncAgentAvatar(); });
 $('#f-submit').addEventListener('click', async () => {
   try {
     await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo: $('#f-repo').value, agent: $('#f-agent').value });
-    $('#f-title').value = ''; $('#f-prompt').value = ''; $('#dlg-new').close(); await loadState();
+    $('#f-title').value = ''; $('#f-prompt').value = '';
+    if (PORTRAITS.dwight) { PORTRAITS.dwight.mood('happy', 1500); await sleep(1500); }
+    $('#dlg-new').close(); await loadState();
   } catch (e) { alert(e.message); }
 });
-$('#btn-mission').addEventListener('click', () => $('#dlg-mission').showModal());
+$('#btn-mission').addEventListener('click', () => { $('#dlg-mission').showModal(); mountHeadPortrait('michael', 'mission-avatar', 'beard.png'); });
 $('#m-submit').addEventListener('click', async () => {
   try {
     await api('/api/missions', 'POST', { goal: $('#m-goal').value, repo: $('#m-repo').value });
-    $('#m-goal').value = ''; $('#dlg-mission').close(); await loadState();
+    $('#m-goal').value = '';
+    if (PORTRAITS.michael) { PORTRAITS.michael.mood('happy', 1500); await sleep(1500); }
+    $('#dlg-mission').close(); await loadState();
   } catch (e) { alert(e.message); }
 });
 async function addRepoPrompt() {
@@ -841,11 +885,12 @@ function updateModeBusy() {
   for (const a of (STATE.agents || [])) document.querySelectorAll(`.avatar[data-agent="${a.name}"]`).forEach(el => el.classList.toggle('busy', !!a.state && a.state !== 'idle'));
 }
 
-// Аватар выбранного агента в окне новой задачи.
+// Аватар выбранного агента в окне новой задачи — тоже живой портрет (моргает), но без речи/эмоций.
 function syncAgentAvatar() {
-  const sel = document.getElementById('f-agent'), img = document.getElementById('f-agent-avatar'); if (!sel || !img) return;
+  const sel = document.getElementById('f-agent'), el = document.getElementById('f-agent-avatar'); if (!sel || !el) return;
   const a = (STATE.agents || []).find(x => x.name === sel.value);
-  if (a && a.avatar) { img.src = '/ui/assets/portraits/' + a.avatar; img.hidden = false; } else img.hidden = true;
+  if (a && a.avatar) { el.hidden = false; if (window.LivePortrait) PORTRAITS.pick = window.LivePortrait.mount(el, a.avatar); }
+  else { el.hidden = true; PORTRAITS.pick?.stop(); }
 }
 document.getElementById('f-agent')?.addEventListener('change', syncAgentAvatar);
 
