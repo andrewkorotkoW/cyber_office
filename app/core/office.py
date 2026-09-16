@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Callable
 
-from app.core import memory, worktree
+from app.core import memory, procs, worktree
 from app.core.events import bus
 from app.core.planner import Planner
 from app.core.roster import Roster
@@ -190,6 +192,17 @@ class Office:
         if fut and not fut.done():
             fut.cancel()
 
+    async def delete_task(self, task_id: str) -> bool:
+        """Останавливает работающую задачу, чистит связанный worktree и убирает задачу
+        из хранилища. Не ошибка, если задачи уже нет (см. app.main и app.telegram)."""
+        t = self.store.get(task_id)
+        if t and t.status == "running":
+            await self.stop(task_id)   # t обновится на месте (та же ссылка)
+        self.cancel_auto_retry(task_id)
+        if t and t.status in ("review", "failed"):
+            await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
+        return self.store.delete(task_id)
+
     def resume_pending_auto_retries(self) -> None:
         """После рестарта сервера отложенные asyncio.Task на автоповтор не переживают
         перезапуск — карточка обещает t.auto_retry_at, которого фактически не будет.
@@ -251,6 +264,30 @@ class Office:
         await self._refresh_staleness(t.repo)
         self.kick_all()          # зависимые задачи могли разблокироваться
         return True, out
+
+    async def run_after_merge(self, repo: str, task_id: str, after_merge_cmd: str | None) -> None:
+        """Хук после вливания в main: например, перезапуск бота на новом коде. Команда и repo
+        передаются вызывающим кодом (Office не знает про repos.json, см. app.main._after_merge_cmd)."""
+        if not after_merge_cmd:
+            return
+        proc = await asyncio.create_subprocess_shell(after_merge_cmd, cwd=repo, stdout=asyncio.subprocess.PIPE,
+                                                      stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        procs.track(proc.pid)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=False, output="таймаут 120с")
+            log.info("after_merge %s: таймаут 120с", repo)
+            return
+        finally:
+            procs.untrack(proc.pid)
+        text = out.decode("utf-8", errors="replace").strip()[-400:]
+        await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=proc.returncode == 0, output=text)
+        log.info("after_merge %s: exit %s %s", repo, proc.returncode, text)
 
     async def _refresh_staleness(self, repo: str) -> None:
         """main изменился — пересчитать отставание у всех задач этого репо, ждущих ревью."""

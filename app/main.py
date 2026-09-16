@@ -10,7 +10,6 @@ import dataclasses
 import json
 import logging
 import os
-import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -71,7 +70,7 @@ async def lifespan(app: FastAPI):
     office.resume_pending_auto_retries()
     if config.TG_TOKEN and config.TG_ADMINS:
         from app import telegram
-        asyncio.create_task(telegram.run(office, _repos))
+        asyncio.create_task(telegram.run(office, _repos, _after_merge_cmd))
     elif config.TG_TOKEN:
         log.warning("AO_TG_TOKEN задан, но AO_TG_ADMINS пуст — мост выключен: некому доверять")
     try:
@@ -131,29 +130,9 @@ def _repo_base(repo: str) -> str | None:
 
 
 async def _run_after_merge(repo: str, task_id: str) -> None:
-    """Хук после вливания в main: например, перезапуск бота на новом коде.
-    Команда задаётся в repos.json и выполняется в каталоге репозитория."""
-    cmd = _after_merge_cmd(repo)
-    if not cmd:
-        return
-    proc = await asyncio.create_subprocess_shell(cmd, cwd=repo, stdout=asyncio.subprocess.PIPE,
-                                                 stderr=asyncio.subprocess.STDOUT, start_new_session=True)
-    procs.track(proc.pid)
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-    except asyncio.TimeoutError:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=False, output="таймаут 120с")
-        log.info("after_merge %s: таймаут 120с", repo)
-        return
-    finally:
-        procs.untrack(proc.pid)
-    text = out.decode("utf-8", errors="replace").strip()[-400:]
-    await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=proc.returncode == 0, output=text)
-    log.info("after_merge %s: exit %s %s", repo, proc.returncode, text)
+    """Тонкая обёртка над Office.run_after_merge — удобно для asyncio.create_task,
+    т.к. Office не знает про repos.json и команду для конкретного repo."""
+    await office.run_after_merge(repo, task_id, _after_merge_cmd(repo))
 
 
 class RepoIn(BaseModel):
@@ -271,13 +250,7 @@ async def note(task_id: str, body: Note) -> dict:
 
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: str) -> dict:
-    t = office.store.get(task_id)
-    if t and t.status == "running":
-        await office.stop(task_id)     # останавливаем, а не отказываем — t обновится на месте (та же ссылка)
-    office.cancel_auto_retry(task_id)
-    if t and t.status in ("review", "failed"):
-        await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
-    return {"ok": office.store.delete(task_id)}
+    return {"ok": await office.delete_task(task_id)}
 
 
 # ------------------------------------------------------------------ миссии

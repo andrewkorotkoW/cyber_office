@@ -36,6 +36,7 @@ import json
 _office: Office | None = None
 _bot: Bot | None = None
 _repos_fn = None
+_after_merge_cmd_fn = None
 _PREFS = config.WORKSPACE / "tg_prefs.json"
 _current_repo: dict[int, str] = {}          # tg_id -> выбранный репозиторий (хранится в tg_prefs.json)
 _pending_reason: dict[int, str] = {}       # tg_id -> task_id, ждём текст причины отклонения
@@ -265,10 +266,9 @@ async def actions(callback: CallbackQuery) -> None:
         ok, out = await _office.approve(task_id)
         await callback.answer("Влито в main" if ok else "Не удалось", show_alert=not ok)
         if ok:
-            from app.main import _run_after_merge
             t0 = _office.store.get(task_id)
             if t0:
-                asyncio.create_task(_run_after_merge(t0.repo, task_id))
+                asyncio.create_task(_office.run_after_merge(t0.repo, task_id, _after_merge_cmd_fn(t0.repo)))
     elif action == "reject":
         _pending_reason[uid] = task_id
         await callback.answer()
@@ -281,12 +281,7 @@ async def actions(callback: CallbackQuery) -> None:
         ok = await _office.stop(task_id)
         await callback.answer("Остановлено" if ok else "Не удалось", show_alert=not ok)
     elif action == "delete":
-        t = _office.store.get(task_id)
-        if t and t.status != "running":
-            from app.core import worktree
-            _office.cancel_auto_retry(task_id)
-            await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
-            _office.store.delete(task_id)
+        await _office.delete_task(task_id)
         await callback.answer("Удалено")
     elif action == "diff":
         await callback.answer()
@@ -367,10 +362,10 @@ async def _on_event(ev: Event) -> None:
             await _notify_admins(text)
 
 
-async def run(office: Office, repos_fn) -> None:
+async def run(office: Office, repos_fn, after_merge_cmd_fn) -> None:
     """Запускается как фоновая задача сервера, если задан AO_TG_TOKEN."""
-    global _office, _bot, _repos_fn
-    _office, _repos_fn = office, repos_fn
+    global _office, _bot, _repos_fn, _after_merge_cmd_fn
+    _office, _repos_fn, _after_merge_cmd_fn = office, repos_fn, after_merge_cmd_fn
     _load_prefs()
     _bot = Bot(token=config.TG_TOKEN)
     dp = Dispatcher()
