@@ -179,6 +179,15 @@ async def merge(repo: str, branch: str, message: str, base: str | None = None) -
         code, sha = await _git(str(tmp), "rev-parse", "HEAD")
         if code != 0:
             return "failed", sha
+        # Если base выведена в рабочую копию пользователя — двигаем её fast-forward'ом:
+        # это обновит и ref, и индекс, и файлы на диске (update-ref сдвинул бы только ref,
+        # и рабочая копия осталась бы на старом коммите — так пропадали файлы после мержа).
+        _, head_ref = await _git(repo, "symbolic-ref", "-q", "HEAD")
+        if head_ref.strip() == f"refs/heads/{resolved}":
+            code, out = await _git(repo, "merge", "--ff-only", sha)
+            if code == 0:
+                return "ok", sha
+            log.warning("ff-only в рабочей копии %s не удался (%s) — обновляю только ref", repo, out.strip()[:200])
         code, out = await _git(repo, "update-ref", f"refs/heads/{resolved}", sha)
         if code != 0:
             return "failed", out
