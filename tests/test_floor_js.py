@@ -204,6 +204,7 @@ def test_module_exports_no_public_walk_or_pathfinding_functions_for_people():
         "humanRows", "DESK_FOOT", "DESK_MIN_GAP",
         "PET_COUNT", "segmentIntersectsRect", "computeDogRoute", "dogShouldChase",
         "DOG_CHASE_RADIUS", "DOG_CHASE_COOLDOWN_MS", "DOG_ROUTE_MARGIN",
+        "fitScale",
     }
     assert exported == expected, f"module.exports изменился: {exported.symmetric_difference(expected)}"
 
@@ -331,3 +332,85 @@ def test_named_agent_poses_match_generic_layout_size():
     for name in ("michael", "dwight", "pam"):
         for pose in ("stand", "type1", "type2", "lean", "failed", "done"):
             assert out[name][pose] == 26   # 8 (голова) + 8 (торс) + 10 (ноги) — как у прежнего генератора людей
+
+
+# ---------------------------------------------------------------- fitScale (letterbox 16:9)
+
+def _fit_scale(w, h):
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify(F.fitScale({w}, {h}, F.LW, F.LH)));
+    """)
+    return out
+
+
+def test_fit_scale_wider_container_letterboxes_left_right():
+    """Контейнер шире 16:9 (768×432 при кратности 1) — по высоте ровно кратно, по ширине остаётся
+    свободное поле, сцена центрируется по горизонтали (ox>0, oy==0), без искажения пропорций."""
+    fit = _fit_scale(1200, 432)
+    assert fit["scale"] == 1
+    assert fit["oy"] == 0
+    assert fit["ox"] > 0
+    assert fit["ox"] == pytest.approx((1200 - 768) / 2)
+
+
+def test_fit_scale_narrower_container_letterboxes_top_bottom():
+    """Контейнер уже 16:9 (у'же по ширине, чем требует высота) — по ширине сцена вписана впритык,
+    по высоте остаётся свободное поле сверху/снизу (oy>0, ox==0)."""
+    fit = _fit_scale(400, 400)
+    assert fit["ox"] == pytest.approx(0, abs=1e-6)
+    assert fit["oy"] > 0
+    # сцена вписана целиком: во весь контейнер по ширине, не обрезана по высоте
+    assert fit["scale"] * 768 <= 400 + 1e-6
+    assert fit["scale"] * 432 <= 400 + 1e-6
+
+
+def test_fit_scale_exact_multiple_stays_integer():
+    """Контейнер ровно вдвое больше мира — масштаб целый (2), без дробной погрешности, letterbox нулевой."""
+    fit = _fit_scale(1536, 864)
+    assert fit["scale"] == 2
+    assert fit["ox"] == 0
+    assert fit["oy"] == 0
+
+
+def test_fit_scale_snaps_close_to_integer_for_crisp_pixels():
+    """Если естественный дробный масштаб почти совпадает с целым (в пределах 0.08) — берём целый,
+    чтобы пиксели спрайтов оставались ровными, а не размазывались по дробной сетке."""
+    # min(1500/768, 850/432) = min(1.953125, 1.9675...) = 1.953125 — в пределах 0.08 от 2
+    fit = _fit_scale(1500, 850)
+    assert fit["scale"] == 2
+
+
+def test_fit_scale_does_not_snap_when_far_from_integer():
+    """А вот заметно дробный масштаб (не близко ни к одному целому) снапить нельзя — иначе сцена
+    перестанет вписываться в контейнер целиком."""
+    fit = _fit_scale(1000, 562)  # min(1000/768, 562/432) ≈ 1.301 — далеко и от 1, и от 2
+    assert fit["scale"] == pytest.approx(min(1000 / 768, 562 / 432))
+
+
+def test_fit_scale_never_goes_below_half():
+    """Масштаб не падает ниже 0.5, даже если контейнер совсем маленький — иначе сцена/подписи
+    становятся нечитаемыми; при этом при необходимости центрированная сцена может слегка выходить
+    за пределы контейнера (canvas сам обрежет лишнее)."""
+    fit = _fit_scale(100, 60)
+    assert fit["scale"] == 0.5
+
+
+def test_fit_scale_mobile_width_360():
+    """Мобильная раскладка: контейнер той же пропорции 16:9, ширина 360 (реальный размер узкого
+    телефона) — минимальный масштаб 0.5 применяется, сцена центрирована, отклонение центра
+    симметрично по обеим осям (одна и та же пропорция контейнера)."""
+    w, h = 360, 360 * 9 / 16
+    fit = _fit_scale(w, h)
+    assert fit["scale"] == 0.5
+    assert fit["ox"] == pytest.approx((w - 768 * 0.5) / 2)
+    assert fit["oy"] == pytest.approx((h - 432 * 0.5) / 2)
+
+
+def test_fit_scale_preserves_aspect_ratio_always():
+    """Свойство, которое должно выполняться для любого разумного размера контейнера: отрисованная
+    сцена (LW*scale × LH*scale) всегда имеет пропорцию ровно 16:9, независимо от формы контейнера."""
+    for w, h in [(1200, 500), (768, 768), (2000, 300), (500, 900), (768, 432), (360, 202.5)]:
+        fit = _fit_scale(w, h)
+        drawn_w, drawn_h = 768 * fit["scale"], 432 * fit["scale"]
+        assert drawn_w / drawn_h == pytest.approx(16 / 9, rel=1e-6)
