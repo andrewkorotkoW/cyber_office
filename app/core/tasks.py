@@ -59,6 +59,8 @@ class Task:
     auto_retry_at: str | None = None            # когда сработает следующий автоповтор (None — не запланирован)
     merge_commit: str | None = None             # sha коммита мерджа в main (для diff после done, когда worktree уже удалён)
     pending_notes: list[str] = field(default_factory=list)   # заметки, присланные пока задача ещё running
+    started_at: str | None = None               # когда агент начал работу (для длительности на графе миссии)
+    finished_at: str | None = None              # когда задача пришла к review/done/failed
 
     def touch(self) -> None:
         self.updated_at = datetime.now().isoformat(timespec="seconds")

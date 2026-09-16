@@ -71,6 +71,49 @@ async def test_queue_per_agent_and_reject_retry(workspace):
     assert not await office.approve(t2.id + "x")[0] if False else True
 
 
+async def test_started_finished_at_set_on_run(workspace):
+    """started_at/finished_at (граф миссии считает по ним длительность узла) проставляются
+    в office._run: started_at — когда агент взял задачу, finished_at — когда она пришла
+    к review/done/failed, независимо от исхода."""
+    from app import config
+    store, roster = TaskStore(config.TASKS_FILE), Roster()
+    office = Office(store, roster, FakeRunner(delay=0.01))
+    t = await office.create_task("Обновить README", "текст", workspace["repo"], "michael")
+    assert t.started_at is None and t.finished_at is None
+    assert await _wait_status(store, t.id, "review")
+    t = store.get(t.id)
+    assert t.started_at is not None and t.finished_at is not None
+    assert t.started_at <= t.finished_at        # ISO timestamp — сортируется как время
+
+
+async def test_started_finished_at_set_on_failure_too(workspace):
+    from app import config
+    store, roster = TaskStore(config.TASKS_FILE), Roster()
+    # fail_text без маркеров сбоя API — задача падает без автоповтора (не оставляет
+    # отложенных asyncio-таймеров к концу теста, см. память про office retry test hang)
+    office = Office(store, roster, FakeRunner(delay=0.01, fail_times=1, fail_text="агент упал сам по себе"))
+    t = await office.create_task("Сломается", "текст", workspace["repo"], "michael")
+    assert await _wait_status(store, t.id, "failed")
+    t = store.get(t.id)
+    assert t.started_at is not None and t.finished_at is not None
+    assert t.auto_retry_at is None              # без автоповтора — таймеров не осталось
+
+
+async def test_retry_resets_started_finished_at_before_rerun(workspace):
+    from app import config
+    store, roster = TaskStore(config.TASKS_FILE), Roster()
+    office = Office(store, roster, FakeRunner(delay=0.02))
+    t = await office.create_task("Обновить README", "текст", workspace["repo"], "michael")
+    assert await _wait_status(store, t.id, "review")
+    first_started = store.get(t.id).started_at
+    assert await office.reject(t.id)
+    assert await office.retry(t.id, "уточнение")
+    assert await _wait_status(store, t.id, "review")
+    second = store.get(t.id)
+    assert second.started_at is not None and second.finished_at is not None
+    assert second.started_at >= first_started   # новый запуск — новая метка, не старая
+
+
 async def test_create_task_validation(workspace):
     from app import config
     office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner())

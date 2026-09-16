@@ -133,16 +133,113 @@ function renderMissions() {
       <div class="s">${MISSION_RU[m.status] || m.status}${m.summary ? ' · ' + esc(m.summary) : ''}${m.error ? ' · ' + esc(m.error) : ''} · ${done}/${ts.length}${m.cost_usd ? ' · $' + m.cost_usd.toFixed(2) : ''}
         <button class="small" style="float:right" data-del="${m.id}">✕</button></div>
       <div class="bar"><i style="width:${ts.length ? Math.round(done / ts.length * 100) : 0}%"></i></div>
-      ${renderMissionGraph(ts)}`;
+      ${renderMissionGraph(ts, m.status)}`;
     d.querySelector('[data-del]').addEventListener('click', async (e) => { e.stopPropagation(); if (!(await uiConfirm('Удалить миссию и все её задачи?'))) return; try { await api(`/api/missions/${m.id}`, 'DELETE'); await loadState(); } catch (err) { alert(err.message); } });
-    d.querySelectorAll('.graph-node').forEach(el => el.addEventListener('click', (e) => { e.stopPropagation(); openTask(el.dataset.task); }));
+    const byId = new Map(ts.map(t => [t.id, t]));
+    d.querySelectorAll('.graph-node').forEach(el => {
+      const t = byId.get(el.dataset.task); if (!t) return;
+      el.addEventListener('mouseenter', () => { if (!GRAPH_TOUCH) { showGraphTip(el, t); GRAPH_TIP_NODE = el; } });
+      el.addEventListener('mouseleave', () => { if (!GRAPH_TOUCH) hideGraphTip(); });
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (GRAPH_TOUCH && GRAPH_TIP_NODE !== el) { showGraphTip(el, t); GRAPH_TIP_NODE = el; return; }
+        openTask(t.id);
+      });
+    });
     box.appendChild(d);
   }
 }
 
+// ---- время на узлах графа + критический путь (ui/graph.js::criticalPath — чистая функция, тестируется отдельно)
+// длительность в минутах: приоритет started_at/finished_at (полный ISO с датой); для старых задач,
+// созданных до появления этих полей, — по HH:MM:SS в строках log (без даты — годится только на
+// вычисление разницы в пределах одних суток, что для уже сделанных задач почти всегда верно)
+function logSeconds(t, substr) {
+  for (let i = t.log.length - 1; i >= 0; i--) {
+    if (t.log[i].includes(substr)) { const m = t.log[i].match(/^(\d{2}):(\d{2}):(\d{2})/); return m ? (+m[1] * 3600 + +m[2] * 60 + +m[3]) : null; }
+  }
+  return null;
+}
+function lastLogSeconds(t) {
+  for (let i = t.log.length - 1; i >= 0; i--) { const m = t.log[i].match(/^(\d{2}):(\d{2}):(\d{2})/); if (m) return +m[1] * 3600 + +m[2] * 60 + +m[3]; }
+  return null;
+}
+function taskDurationMinutes(t, nowMs) {
+  const now = nowMs != null ? nowMs : Date.now();
+  if (t.status === 'running') {
+    if (t.started_at) return Math.max(0, Math.round((now - Date.parse(t.started_at)) / 60000));
+    const s = logSeconds(t, 'агент начал работу'); if (s == null) return null;
+    const d = new Date(); const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, s).getTime();
+    return start > now ? null : Math.max(0, Math.round((now - start) / 60000));
+  }
+  if (!['done', 'review', 'failed'].includes(t.status)) return null;
+  if (t.started_at && t.finished_at) return Math.max(0, Math.round((Date.parse(t.finished_at) - Date.parse(t.started_at)) / 60000));
+  const startS = logSeconds(t, 'агент начал работу'), endS = lastLogSeconds(t);
+  if (startS == null || endS == null || endS < startS) return null;
+  return Math.round((endS - startS) / 60);
+}
+// медиана длительностей уже завершённых задач той же миссии — оценка для todo/текущей цели running-узла; 15 мин, если нечем оценить
+function medianTaskEstimate(tasks) {
+  const durations = tasks.filter(t => ['done', 'review', 'failed'].includes(t.status)).map(t => taskDurationMinutes(t)).filter(m => m != null).sort((a, b) => a - b);
+  if (!durations.length) return 15;
+  const mid = Math.floor(durations.length / 2);
+  return durations.length % 2 ? durations[mid] : Math.round((durations[mid - 1] + durations[mid]) / 2);
+}
+function graphNodeWeight(t, estimate, nowMs) { return taskDurationMinutes(t, nowMs) ?? estimate; }
+function graphTimeLabel(t) {
+  if (t.status === 'todo') return '⏱ —';
+  const mins = taskDurationMinutes(t);
+  if (mins == null) return '⏱ —';
+  return t.status === 'running' ? `⏱ ${mins} мин…` : `⏱ ${mins} мин · ${t.turns} ходов`;
+}
+// сколько ещё осталось этому узлу критического пути: 0 для уже завершённых, оценка для todo,
+// оценка минус уже прошедшее для running — используется для «ожидаемое окончание»
+function remainingMinutes(t, estimate, nowMs) {
+  if (!t) return 0;
+  if (t.status === 'todo') return estimate;
+  if (t.status === 'running') return Math.max(0, estimate - (taskDurationMinutes(t, nowMs) ?? 0));
+  return 0;
+}
+function ruTasks(n) {
+  const n10 = n % 10, n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return 'задача';
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return 'задачи';
+  return 'задач';
+}
+
+// плавающий тултип узла графа: hover на десктопе, тап на мобиле (см. GRAPH_TOUCH ниже —
+// на тач-устройствах первый тап только показывает тултип, второй — открывает карточку задачи)
+const GRAPH_TOUCH = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+let GRAPH_TIP_EL = null, GRAPH_TIP_NODE = null;
+function graphTip() {
+  if (!GRAPH_TIP_EL) { GRAPH_TIP_EL = document.createElement('div'); GRAPH_TIP_EL.className = 'graph-tip'; GRAPH_TIP_EL.hidden = true; document.body.appendChild(GRAPH_TIP_EL); }
+  return GRAPH_TIP_EL;
+}
+function graphTipHtml(t) {
+  const mins = taskDurationMinutes(t);
+  const start = t.started_at ? fmtTime(t.started_at) : '—', end = t.finished_at ? fmtTime(t.finished_at) : '—';
+  return `<div class="gt-t">${esc(t.title)}</div>
+    <div>${avatarImg(t.agent, 14)}${esc(agentTitle(t.agent))} · ${STATUS_RU[t.status]}</div>
+    <div>начало ${start} · конец ${end}</div>
+    <div>${mins != null ? '⏱ ' + mins + ' мин' : '⏱ —'} · ${t.turns} ходов</div>
+    ${t.branch ? `<div>⎇ ${esc(t.branch)}</div>` : ''}`;
+}
+function showGraphTip(el, t) {
+  const tip = graphTip(); tip.innerHTML = graphTipHtml(t); tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  tip.style.top = (r.bottom + 6) + 'px';
+  tip.style.left = Math.max(4, Math.min(r.left, window.innerWidth - 240)) + 'px';
+}
+function hideGraphTip() { if (GRAPH_TIP_EL) GRAPH_TIP_EL.hidden = true; GRAPH_TIP_NODE = null; }
+document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('.graph-node')) hideGraphTip(); });
+// живой счётчик минут для running-узлов графа — сам renderMissions() ничего не анимирует,
+// просто перерисовывается целиком раз в 30с, пока в какой-нибудь активной миссии есть running-задача
+setInterval(() => { if (STATE.tasks.some(t => t.status === 'running' && t.mission_id)) renderMissions(); }, 30000);
+
 // SVG-граф подзадач миссии: слои считает Graph.computeGraphLayout (ui/graph.js, тестируется отдельно),
-// здесь только разметка узлов (аватар агента + название, цвет по статусу) и рёбер depends_on.
-function renderMissionGraph(tasks) {
+// здесь разметка узлов (аватар, название, время) и рёбер depends_on, а также критический путь
+// (Graph.criticalPath — тоже чистая функция, вес узла graphNodeWeight выше).
+function renderMissionGraph(tasks, missionStatus) {
   if (!tasks.length || !window.Graph) return '';
   const nodes = Graph.computeGraphLayout(tasks.map(t => ({ id: t.id, depends_on: t.depends_on })));
   const pos = new Map(nodes.map(n => [n.id, n]));
@@ -154,21 +251,42 @@ function renderMissionGraph(tasks) {
   const W = PAD * 2 + maxLayer * Graph.STEP_X + NW;
   const H = PAD * 2 + (maxRows - 1) * Graph.STEP_Y + NH;
   const left = (n) => PAD + n.x, right = (n) => PAD + n.x + NW, midY = (n) => PAD + n.y + NH / 2;
-  const edges = [];
-  for (const t of tasks) for (const dep of (t.depends_on || [])) {
-    const a = pos.get(dep), b = pos.get(t.id); if (!a || !b) continue;
-    edges.push(`<line class="graph-edge" x1="${right(a)}" y1="${midY(a)}" x2="${left(b)}" y2="${midY(b)}"></line>`);
-  }
+
+  const edgePairs = [];
+  for (const t of tasks) for (const dep of (t.depends_on || [])) if (byId.has(dep)) edgePairs.push([dep, t.id]);
+  const estimate = medianTaskEstimate(tasks);
+  const weights = {}; for (const t of tasks) weights[t.id] = graphNodeWeight(t, estimate);
+  const critPath = Graph.criticalPath(tasks.map(t => t.id), edgePairs, weights);
+  const critNodes = new Set(critPath);
+  const critEdges = new Set(); for (let i = 0; i < critPath.length - 1; i++) critEdges.add(critPath[i] + '>' + critPath[i + 1]);
+
+  const edges = edgePairs.map(([dep, id]) => {
+    const a = pos.get(dep), b = pos.get(id); if (!a || !b) return '';
+    return `<line class="graph-edge${critEdges.has(dep + '>' + id) ? ' critical' : ''}" x1="${right(a)}" y1="${midY(a)}" x2="${left(b)}" y2="${midY(b)}"></line>`;
+  }).join('');
   const nodesHtml = nodes.map(n => {
     const t = byId.get(n.id); if (!t) return '';
     const x = PAD + n.x, y = PAD + n.y, color = STATUS_COLOR[t.status] || STATUS_COLOR.todo;
-    return `<g class="graph-node ${t.status}" data-task="${t.id}" transform="translate(${x},${y})"><title>${esc(t.title)}</title>
+    return `<g class="graph-node ${t.status}${critNodes.has(t.id) ? ' critical' : ''}" data-task="${t.id}" transform="translate(${x},${y})">
       <rect class="node-bg" width="${NW}" height="${NH}" rx="6" fill="${color}22" stroke="${color}"></rect>
-      <foreignObject width="${NW}" height="${NH}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;align-items:center;gap:6px;height:100%;padding:0 8px;box-sizing:border-box;overflow:hidden">
-        ${avatarImg(t.agent, 22)}<span style="font-size:10.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--text)">${esc(t.title)}</span>
+      <foreignObject width="${NW}" height="${NH}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;flex-direction:column;justify-content:center;gap:2px;height:100%;padding:0 8px;box-sizing:border-box;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;overflow:hidden">${avatarImg(t.agent, 20)}<span style="font-size:10.5px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--text)">${esc(t.title)}</span></div>
+        <div style="font-size:9.5px;color:var(--mute)">${esc(graphTimeLabel(t))}</div>
       </div></foreignObject></g>`;
   }).join('');
-  return `<div class="mission-graph"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges.join('')}${nodesHtml}</svg></div>`;
+
+  let caption = '';
+  if (critPath.length) {
+    const totalMin = Math.round(critPath.reduce((s, id) => s + (weights[id] || 0), 0));
+    caption = `Критический путь: ${critPath.length} ${ruTasks(critPath.length)} · ~${totalMin} мин`;
+    if (missionStatus === 'active') {
+      const remaining = critPath.reduce((s, id) => s + remainingMinutes(byId.get(id), estimate), 0);
+      const eta = new Date(Date.now() + remaining * 60000);
+      caption += ` · ожидаемое окончание ~${eta.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+  }
+  return `<div class="mission-graph"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges}${nodesHtml}</svg></div>
+    ${caption ? `<div class="graph-caption">${esc(caption)}</div>` : ''}`;
 }
 
 function buildCard(t) {

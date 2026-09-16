@@ -65,7 +65,8 @@ class Office:
         a = self.roster.get(task.agent)
         assert a is not None
         a.state, a.current_task = "working", task.id
-        task.status = "running"; task.note("агент начал работу"); self.store.update(task)
+        task.status = "running"; task.started_at = datetime.now().isoformat(timespec="seconds")
+        task.note("агент начал работу"); self.store.update(task)
         await bus.emit("agent.state", a.name, task.id, state="working")
         await bus.emit("task.updated", a.name, task.id, task=_pub(task))
         try:
@@ -78,7 +79,8 @@ class Office:
             task.result, task.cost_usd, task.turns = res.text, res.cost_usd, res.turns
             task.diff_stat = await worktree.diff_stat(task.repo, branch)
             if res.ok:
-                task.status = "review"; task.note("готово, ждёт ревью")
+                task.status = "review"; task.finished_at = datetime.now().isoformat(timespec="seconds")
+                task.note("готово, ждёт ревью")
                 task.error, task.auto_retries, task.auto_retry_at = None, 0, None
                 task.behind_main, task.overlap_files = await worktree.staleness(task.repo, branch)
                 if task.overlap_files:
@@ -86,14 +88,14 @@ class Office:
                 memory.append(a.name, task.title, task.repo, res.text)
             else:
                 reason = infra_failure_reason(res)
-                task.status = "failed"
+                task.status = "failed"; task.finished_at = datetime.now().isoformat(timespec="seconds")
                 task.error = reason or res.error or "неизвестная ошибка"
                 task.note(f"ошибка: {task.error}")
                 if reason:
                     await self._handle_infra_failure(task, reason)
         except Exception as exc:
             log.exception("task %s failed", task.id)
-            task.status = "failed"
+            task.status = "failed"; task.finished_at = datetime.now().isoformat(timespec="seconds")
             reason = infra_failure_reason(RunResult(False, task.result or "", error=str(exc)))
             task.error = reason or str(exc)
             task.note(f"сбой: {exc}")
@@ -217,6 +219,7 @@ class Office:
             t.prompt += "\n\nДополнения, присланные пока агент работал:\n" + "\n".join(f"- {n}" for n in t.pending_notes)
             t.pending_notes = []
         t.status, t.branch, t.worktree, t.result, t.diff_stat = "todo", None, None, None, None
+        t.started_at, t.finished_at = None, None
         t.behind_main, t.overlap_files = 0, []
         t.error, t.auto_retry_at = None, None   # auto_retries не сбрасываем — это счётчик подряд идущих сбоев API
         t.note("отправлена заново"); self.store.update(t)
