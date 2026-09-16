@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
+import webbrowser
 from pathlib import Path
 
 from app import config
@@ -186,4 +189,20 @@ async def generate_and_open(repo: str, run_id: str) -> None:
     if proc.returncode != 0:
         raise RuntimeError(out.decode("utf-8", errors="replace").strip()[-800:] or "allure generate завершился с ошибкой")
     index = out_dir / "index.html"
-    subprocess.Popen(["open", str(index)])
+    open_in_browser(index)
+
+
+def open_in_browser(path: Path) -> None:
+    """`open` (macOS) есть только на macOS — на Linux аналог `xdg-open`, на Windows
+    open в понимании shell вообще не бинарник, а команда cmd; os.startfile надёжнее.
+    webbrowser.open — общий запасной вариант, если ни того ни другого нет в PATH."""
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        xdg_open = shutil.which("xdg-open")
+        if xdg_open:
+            subprocess.Popen([xdg_open, str(path)])
+        else:
+            webbrowser.open(path.as_uri())

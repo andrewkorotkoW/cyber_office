@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import allure, scenarios, testlab, worktree
+from app.core import allure, lock, scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office, build_summary
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -44,14 +44,13 @@ def acquire_lock() -> None:
     """Второй сервер на том же workspace затирал бы tasks.json — не даём ему стартовать.
     Вызывается при реальном старте сервера, а не при импорте: окно .app импортирует
     этот модуль, чтобы подключиться к уже работающему серверу."""
-    import fcntl
     global _lock_fh
-    _lock_fh = open(config.WORKSPACE / ".server.lock", "w")
     try:
-        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+        _lock_fh = lock.acquire(config.WORKSPACE / ".server.lock")
+    except lock.LockHeld:
         raise SystemExit(f"cyber_office уже запущен на этом workspace ({config.WORKSPACE}). "
                          f"Открой http://{config.HOST}:{config.PORT} или останови тот процесс.")
+    _lock_fh.seek(0); _lock_fh.truncate()
     _lock_fh.write(str(os.getpid())); _lock_fh.flush()
     (config.WORKSPACE / "server.pid").write_text(str(os.getpid()))   # его читает подсказка after_merge
 
@@ -438,6 +437,12 @@ async def _start_telegram() -> None:
 
 def main() -> None:
     acquire_lock()
+    if not FAKE and not Path(config.CLAUDE_BIN).exists():
+        raise SystemExit(
+            f"claude CLI не найден ({config.CLAUDE_BIN}). Поставь Claude Code "
+            f"(https://claude.com/claude-code) и войди в аккаунт (`claude` → /login), "
+            f"либо укажи путь в переменной окружения AO_CLAUDE_BIN. Для запуска без "
+            f"агентов, только чтобы посмотреть интерфейс: AO_FAKE=1 python -m app.main")
     log.info("cyber_office: режим %s, claude=%s", "имитация" if FAKE else "claude", config.CLAUDE_BIN)
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning")
 

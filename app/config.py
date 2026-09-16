@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from pathlib import Path
 
 try:
@@ -18,7 +20,25 @@ WORKTREES_DIR = WORKSPACE / "worktrees"
 TASKS_FILE = WORKSPACE / "tasks.json"
 ROSTER_FILE = WORKSPACE / "roster.json"
 
-CLAUDE_BIN = os.getenv("AO_CLAUDE_BIN", str(Path.home() / ".local/bin/claude"))
+
+def find_claude_bin() -> str:
+    """AO_CLAUDE_BIN, если задан, побеждает всё остальное. Иначе — `claude` в PATH
+    (на Windows ищем claude.cmd/claude.exe: так CLI ставится там обычно), и только
+    если нигде не нашли — старый путь ~/.local/bin, даже если по нему пусто (чтобы
+    было что показать в понятной ошибке при старте, см. app.main.main)."""
+    env = os.getenv("AO_CLAUDE_BIN")
+    if env:
+        return env
+    names = ("claude.cmd", "claude.exe", "claude") if sys.platform == "win32" else ("claude",)
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    local_name = "claude.exe" if sys.platform == "win32" else "claude"
+    return str(Path.home() / ".local" / "bin" / local_name)
+
+
+CLAUDE_BIN = find_claude_bin()
 DEFAULT_MODEL = os.getenv("AO_MODEL", "sonnet")
 MAX_TURNS = int(os.getenv("AO_MAX_TURNS", "100"))   # 40 не хватало на обзор проекта в 2000 строк
 HOST = os.getenv("AO_HOST", "127.0.0.1")
