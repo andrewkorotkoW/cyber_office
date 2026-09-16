@@ -82,3 +82,17 @@ def test_mission_graph_rendering_uses_graph_js_layout():
     assert "renderMissionGraph" in APP_JS
     assert "Graph.computeGraphLayout" in APP_JS
     assert "computeGraphLayout" in GRAPH_JS
+
+
+def test_mission_graph_shows_time_and_critical_path():
+    assert "function taskDurationMinutes(" in APP_JS
+    assert "graphTimeLabel" in APP_JS and "⏱" in APP_JS
+    assert "Graph.criticalPath" in APP_JS
+    assert "criticalPath" in GRAPH_JS
+    assert "Критический путь" in APP_JS
+    assert "critical" in APP_JS and ".graph-node.critical" in (REPO_ROOT / "ui" / "style.css").read_text(encoding="utf-8")
+
+
+def test_mission_graph_node_tooltip_exists():
+    assert "showGraphTip" in APP_JS and "graph-tip" in APP_JS
+    assert "GRAPH_TOUCH" in APP_JS   # тап на тач-устройствах вместо hover

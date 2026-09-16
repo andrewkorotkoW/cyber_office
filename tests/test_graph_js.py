@@ -125,3 +125,77 @@ def test_x_positions_match_layer_times_step():
     by_id = {n["id"]: n for n in out["nodes"]}
     assert by_id["a"]["x"] == 0
     assert by_id["b"]["x"] == out["STEP_X"]
+
+
+# ------------------------------------------------------------ criticalPath
+
+def test_critical_path_linear_chain_is_whole_chain():
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath(
+          ['a', 'b', 'c'],
+          [['a', 'b'], ['b', 'c']],
+          {{ a: 10, b: 20, c: 5 }},
+        )));
+    """)
+    assert out == ["a", "b", "c"]
+
+
+def test_critical_path_diamond_picks_heavier_branch():
+    # a -> b -> d и a -> c -> d; ветка через c тяжелее (30 против 5) — должна победить
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath(
+          ['a', 'b', 'c', 'd'],
+          [['a', 'b'], ['a', 'c'], ['b', 'd'], ['c', 'd']],
+          {{ a: 1, b: 5, c: 30, d: 2 }},
+        )));
+    """)
+    assert out == ["a", "c", "d"]
+
+
+def test_critical_path_parallel_branches_no_shared_nodes():
+    # два независимых узла без рёбер — путь состоит из одного, самого тяжёлого
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath(
+          ['x', 'y'],
+          [],
+          {{ x: 3, y: 9 }},
+        )));
+    """)
+    assert out == ["y"]
+
+
+def test_critical_path_missing_weight_treated_as_estimate_zero():
+    # узел без веса (например, todo-задача без оценки, переданной вызывающей стороной)
+    # не должен ронять функцию — считается весом 0, путь всё равно строится
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath(
+          ['a', 'b'],
+          [['a', 'b']],
+          {{ a: 10 }},
+        )));
+    """)
+    assert out == ["a", "b"]
+
+
+def test_critical_path_cycle_does_not_hang():
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath(
+          ['a', 'b'],
+          [['a', 'b'], ['b', 'a']],
+          {{ a: 1, b: 1 }},
+        )));
+    """)
+    assert set(out) <= {"a", "b"} and len(out) >= 1
+
+
+def test_critical_path_empty_graph():
+    out = _run_node(f"""
+        const G = require({json.dumps(str(GRAPH_JS))});
+        console.log(JSON.stringify(G.criticalPath([], [], {{}})));
+    """)
+    assert out == []
