@@ -10,6 +10,8 @@ import dataclasses
 import json
 import logging
 import os
+import signal
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -19,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import allure, lock, scenarios, testlab, worktree
+from app.core import allure, lock, procs, scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office, build_summary
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -34,7 +36,6 @@ FAKE = os.getenv("AO_FAKE") == "1"
 UI_DIR = config.ROOT / "ui"
 REPOS_FILE = config.WORKSPACE / "repos.json"
 
-app = FastAPI(title="cyber_office")
 config.ensure_dirs()
 
 
@@ -54,6 +55,48 @@ def acquire_lock() -> None:
     _lock_fh.seek(0); _lock_fh.truncate()
     _lock_fh.write(str(os.getpid())); _lock_fh.flush()
     (config.WORKSPACE / "server.pid").write_text(str(os.getpid()))   # его читает подсказка after_merge
+
+# office создаётся в lifespan (после acquire_lock(), которую вызывает только реальный старт
+# сервера — main()/desktop._serve() — а не сам факт импорта модуля), не на импорте: раньше
+# создание office на импорте означало, что окно .app или тестовый импорт уже писали tasks.json.
+office: Office | None = None
+sockets: set[WebSocket] = set()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global office
+    office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
+                    FakePlanner() if FAKE else ClaudePlanner(), base_for=_repo_base)
+    office.resume_pending_auto_retries()
+    if config.TG_TOKEN and config.TG_ADMINS:
+        from app import telegram
+        asyncio.create_task(telegram.run(office, _repos))
+    elif config.TG_TOKEN:
+        log.warning("AO_TG_TOKEN задан, но AO_TG_ADMINS пуст — мост выключен: некому доверять")
+    try:
+        yield
+    finally:
+        # сервер останавливается — не оставлять сиротами claude/pytest/after_merge,
+        # запущенные (start_new_session=True) за время его жизни
+        procs.killall()
+
+
+app = FastAPI(title="cyber_office", lifespan=lifespan)
+
+
+async def _broadcast(ev) -> None:
+    dead = []
+    for ws in list(sockets):
+        try:
+            await ws.send_text(ev.to_json())
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        sockets.discard(ws)
+
+bus.subscribe(_broadcast)
+
 
 # ------------------------------------------------------------------ репозитории
 def _repo_entries() -> list[dict]:
@@ -87,24 +130,6 @@ def _repo_base(repo: str) -> str | None:
     return None
 
 
-office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
-                FakePlanner() if FAKE else ClaudePlanner(), base_for=_repo_base)
-sockets: set[WebSocket] = set()
-
-
-async def _broadcast(ev) -> None:
-    dead = []
-    for ws in list(sockets):
-        try:
-            await ws.send_text(ev.to_json())
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        sockets.discard(ws)
-
-bus.subscribe(_broadcast)
-
-
 async def _run_after_merge(repo: str, task_id: str) -> None:
     """Хук после вливания в main: например, перезапуск бота на новом коде.
     Команда задаётся в repos.json и выполняется в каталоге репозитория."""
@@ -112,8 +137,20 @@ async def _run_after_merge(repo: str, task_id: str) -> None:
     if not cmd:
         return
     proc = await asyncio.create_subprocess_shell(cmd, cwd=repo, stdout=asyncio.subprocess.PIPE,
-                                                 stderr=asyncio.subprocess.STDOUT)
-    out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+                                                 stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+    procs.track(proc.pid)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=False, output="таймаут 120с")
+        log.info("after_merge %s: таймаут 120с", repo)
+        return
+    finally:
+        procs.untrack(proc.pid)
     text = out.decode("utf-8", errors="replace").strip()[-400:]
     await bus.emit("repo.after_merge", None, task_id, repo=repo, ok=proc.returncode == 0, output=text)
     log.info("after_merge %s: exit %s %s", repo, proc.returncode, text)
@@ -214,6 +251,13 @@ async def retry(task_id: str, body: Reason) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/tasks/{task_id}/stop")
+async def stop_task(task_id: str) -> dict:
+    if not await office.stop(task_id):
+        raise HTTPException(400, "задача не выполняется")
+    return {"ok": True}
+
+
 class Note(BaseModel):
     text: str
 
@@ -229,7 +273,7 @@ async def note(task_id: str, body: Note) -> dict:
 async def delete_task(task_id: str) -> dict:
     t = office.store.get(task_id)
     if t and t.status == "running":
-        raise HTTPException(400, "агент ещё работает")
+        await office.stop(task_id)     # останавливаем, а не отказываем — t обновится на месте (та же ссылка)
     office.cancel_auto_retry(task_id)
     if t and t.status in ("review", "failed"):
         await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
@@ -434,15 +478,6 @@ async def index() -> FileResponse:
     return FileResponse(UI_DIR / "index.html")
 
 app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
-
-
-@app.on_event("startup")
-async def _start_telegram() -> None:
-    if config.TG_TOKEN and config.TG_ADMINS:
-        from app import telegram
-        asyncio.create_task(telegram.run(office, _repos))
-    elif config.TG_TOKEN:
-        log.warning("AO_TG_TOKEN задан, но AO_TG_ADMINS пуст — мост выключен: некому доверять")
 
 
 def main() -> None:

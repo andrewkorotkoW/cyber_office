@@ -112,6 +112,11 @@ class Office:
                 task.note(f"ошибка: {task.error}")
                 if reason:
                     await self._handle_infra_failure(task, reason)
+        except asyncio.CancelledError:
+            # остановлена владельцем (см. Office.stop) — не сбой инфраструктуры, без автоповтора
+            task.status = "failed"; task.finished_at = datetime.now().isoformat(timespec="seconds")
+            task.error = "остановлена владельцем"
+            task.note("остановлена владельцем")
         except Exception as exc:
             log.exception("task %s failed", task.id)
             task.status = "failed"; task.finished_at = datetime.now().isoformat(timespec="seconds")
@@ -122,11 +127,33 @@ class Office:
                 await self._handle_infra_failure(task, reason)
         finally:
             self.store.update(task)
-            a.state, a.current_task = "idle", None
+            # self._planning ключуется id миссии, а не именем агента — надёжный признак
+            # того, что параллельно идёт _plan() этого же агента, это a.state == 'planning'
+            # (его выставляет только _plan, см. симметричный prev_state = lead.state там же)
+            if a.state == "planning":
+                a.current_task = None
+            else:
+                a.state, a.current_task = "idle", None
             self._running.pop(a.name, None)
-            await bus.emit("agent.state", a.name, task.id, state="idle")
+            await bus.emit("agent.state", a.name, task.id, state=a.state)
             await bus.emit("task.updated", a.name, task.id, task=_pub(task))
             self.kick(a.name)
+
+    async def stop(self, task_id: str) -> bool:
+        """Отменяет работающую задачу (кнопка «Остановить»). _run() сама обрабатывает
+        отмену (см. except asyncio.CancelledError выше) — тут просто дожидаемся её finally."""
+        t = self.store.get(task_id)
+        if not t or t.status != "running":
+            return False
+        running = self._running.get(t.agent)
+        if running is None:
+            return False
+        running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            pass
+        return True
 
     # ---------------------------------------------------- автоповтор при сбое API
     async def _handle_infra_failure(self, task: Task, reason: str) -> None:
@@ -162,6 +189,23 @@ class Office:
         fut = self._auto_retry.pop(task_id, None)
         if fut and not fut.done():
             fut.cancel()
+
+    def resume_pending_auto_retries(self) -> None:
+        """После рестарта сервера отложенные asyncio.Task на автоповтор не переживают
+        перезапуск — карточка обещает t.auto_retry_at, которого фактически не будет.
+        Вызывается из app.main lifespan сразу после создания Office: пересоздаём
+        таймер на оставшееся время (или сразу, если время уже прошло)."""
+        for t in self.store.by_status("failed"):
+            if not t.auto_retry_at or t.id in self._auto_retry:
+                continue
+            try:
+                at = datetime.fromisoformat(t.auto_retry_at)
+            except ValueError:
+                t.auto_retry_at = None
+                self.store.update(t)
+                continue
+            remaining = max(0.0, (at - datetime.now()).total_seconds())
+            self._auto_retry[t.id] = asyncio.create_task(self._auto_retry_after(t.id, remaining))
 
     # ------------------------------------------------------------ ревью
     async def diff(self, task_id: str) -> str:

@@ -80,20 +80,28 @@ class TaskStore:
         self.load()
 
     def load(self) -> None:
+        """Просто создать/импортировать TaskStore не должно трогать tasks.json на диске —
+        save() зовём только если что-то реально поменялось (миграция старого формата,
+        задача была в running, миссия — в planning)."""
+        changed = False
         if self.path.exists():
             raw = json.loads(self.path.read_text(encoding="utf-8") or "[]")
             if isinstance(raw, list):          # старый формат: только список задач
                 raw = {"tasks": raw, "missions": []}
+                changed = True
             self.tasks = {t["id"]: Task(**t) for t in raw.get("tasks", [])}
             self.missions = {m["id"]: Mission(**m) for m in raw.get("missions", [])}
             for m in self.missions.values():
                 if m.status == "planning":
                     m.status = "failed"; m.error = "процесс перезапущен во время планирования"
+                    changed = True
         # процесс перезапустили посреди работы — такие задачи не «running», а сломанные
         for t in self.tasks.values():
             if t.status == "running":
                 t.status = "failed"; t.note("процесс перезапущен во время работы")
-        self.save()
+                changed = True
+        if changed:
+            self.save()
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -11,11 +11,14 @@ import asyncio
 import json
 import os
 import re
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app import config
 from app.config import CLAUDE_BIN
+from app.core import procs
 
 READ_ONLY_TOOLS = "Read,Grep,Glob,LS,Bash(ls*),Bash(cat*),Bash(git log*),Bash(git status*),Bash(find*),Bash(wc*)"
 
@@ -115,8 +118,24 @@ class ClaudePlanner:
         env = {**os.environ, "PATH": f"{Path(self.binary).parent}:{os.environ.get('PATH', '')}"}
         proc = await asyncio.create_subprocess_exec(*args, cwd=repo, env=env,
                                                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                                                    limit=32 * 1024 * 1024)
-        out, err = await proc.communicate()
+                                                    limit=32 * 1024 * 1024, start_new_session=True)
+        procs.track(proc.pid)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=config.AO_PLAN_TIMEOUT)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            raise RuntimeError(f"планировщик не ответил за {config.AO_PLAN_TIMEOUT}с — таймаут")
+        except asyncio.CancelledError:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            raise
+        finally:
+            procs.untrack(proc.pid)
         try:
             msg = json.loads(out.decode("utf-8", errors="replace"))
         except json.JSONDecodeError:

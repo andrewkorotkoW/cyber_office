@@ -116,6 +116,8 @@ def _task_kb(t) -> InlineKeyboardMarkup | None:
     elif t.status in ("failed", "rejected"):
         rows.append([InlineKeyboardButton(text="🔁 Повторить", callback_data=f"ao:retry:{t.id}"),
                      InlineKeyboardButton(text="🗑 Удалить", callback_data=f"ao:delete:{t.id}")])
+    elif t.status == "running":
+        rows.append([InlineKeyboardButton(text="⏹ Остановить", callback_data=f"ao:stop:{t.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
@@ -275,6 +277,9 @@ async def actions(callback: CallbackQuery) -> None:
     elif action == "retry":
         ok = await _office.retry(task_id)
         await callback.answer("Отправлено заново" if ok else "Нельзя повторить", show_alert=not ok)
+    elif action == "stop":
+        ok = await _office.stop(task_id)
+        await callback.answer("Остановлено" if ok else "Не удалось", show_alert=not ok)
     elif action == "delete":
         t = _office.store.get(task_id)
         if t and t.status != "running":
