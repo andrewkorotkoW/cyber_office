@@ -113,7 +113,7 @@
   </div>
 </dialog>
 <dialog id="dlg-new">
-  <div class="head"><div class="head-person dwight"><div class="live-portrait" id="new-avatar" role="img" aria-label="Дуайт"></div><div class="who">Дуайт</div></div><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="head"><div class="head-person dwight"><div class="live-portrait" id="new-avatar" role="img" aria-label="Дуайт"></div><div class="head-person-text"><div class="who">Дуайт</div><div class="speech" id="new-speech"></div></div></div><h3>Новая задача</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content">
     <div class="row">
       <div><label>Агент</label><div class="agent-pick"><div id="f-agent-avatar" class="pick-avatar" role="img" hidden></div><select id="f-agent"></select></div></div>
@@ -129,7 +129,7 @@
 </dialog>
 
 <dialog id="dlg-mission">
-  <div class="head"><div class="head-person michael"><div class="live-portrait" id="mission-avatar" role="img" aria-label="Майкл"></div><div class="who">Майкл</div></div><h3>Новая миссия</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="head"><div class="head-person michael"><div class="live-portrait" id="mission-avatar" role="img" aria-label="Майкл"></div><div class="head-person-text"><div class="who">Майкл</div><div class="speech" id="mission-speech"></div></div></div><h3>Новая миссия</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
   <div class="content">
     <p style="color:var(--mute);margin:0 0 6px">Одна большая цель. Майкл изучит репозиторий, разобьёт на подзадачи и раздаст команде. Каждая подзадача — отдельное ревью.</p>
     <label>Репозиторий</label><select id="m-repo"></select>
@@ -180,6 +180,7 @@
 <script src="/ui/floor.js"></script>
 <script src="/ui/graph.js"></script>
 <script src="/ui/portrait_anim.js"></script>
+<script src="/ui/speech.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>
