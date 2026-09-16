@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -93,7 +94,7 @@ sockets: set[WebSocket] = set()
 
 async def _broadcast(ev) -> None:
     dead = []
-    for ws in sockets:
+    for ws in list(sockets):
         try:
             await ws.send_text(ev.to_json())
         except Exception:
@@ -417,8 +418,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     sockets.add(ws)
     try:
-        for ev in bus.history[-200:]:
-            await ws.send_text(ev.to_json())
+        history = [dataclasses.asdict(ev) for ev in bus.history[-200:]]
+        await ws.send_text(json.dumps({"kind": "history", "events": history}, ensure_ascii=False))
         while True:
             await ws.receive_text()      # клиент ничего не шлёт; держим соединение
     except WebSocketDisconnect:
