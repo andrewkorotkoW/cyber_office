@@ -304,6 +304,7 @@ function buildCard(t) {
     ${t.diff_stat && t.status === 'review' ? `<div class="m">${esc(t.diff_stat.trim().split('\n').pop())}</div>` : ''}
     ${t.status === 'failed' && t.error ? `<div class="dep">⚠️ ${esc(summary(t.error, 200))}</div>` : ''}
     ${t.status === 'failed' && t.auto_retry_at ? `<div class="m">🔁 автоповтор ${t.auto_retries}/${MAX_AUTO_RETRIES} в ${fmtTime(t.auto_retry_at)}</div>` : ''}
+    ${t.status === 'running' ? `<div class="actions"><button class="small" data-act="stop">⏹ Остановить</button></div>` : ''}
     ${t.status === 'review' ? `<div class="actions"><button class="small ok" data-act="approve">Одобрить</button><button class="small" data-act="reject">Отклонить</button></div>` : ''}
     ${(t.status === 'rejected' || t.status === 'failed') ? `<div class="actions"><button class="small" data-act="retry">Повторить</button><button class="small" data-act="delete">Удалить</button></div>` : ''}
     ${t.status === 'done' ? `<div class="actions"><button class="small" data-act="delete">Убрать</button></div>` : ''}`;
@@ -403,6 +404,7 @@ async function action(t, act, presetText) {
     if (act === 'approve') { await api(`/api/tasks/${t.id}/approve`, 'POST'); }
     if (act === 'reject') { const text = presetText != null ? presetText : ((await uiPrompt('Почему отклоняешь? (пойдёт агенту при повторе)')) ?? ''); await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
     if (act === 'retry') { const text = presetText != null ? presetText : ((await uiPrompt('Уточнение для агента (можно пусто)')) ?? ''); await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
+    if (act === 'stop') { await api(`/api/tasks/${t.id}/stop`, 'POST'); }
     if (act === 'delete') { await api(`/api/tasks/${t.id}`, 'DELETE'); }
     await loadState(); $('#dlg-task').close();
   } catch (e) { alert(e.message); }

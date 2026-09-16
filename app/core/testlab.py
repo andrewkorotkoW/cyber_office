@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import signal
 import sys
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -15,11 +17,13 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import WORKSPACE
+from app.core import procs
 from app.core.events import bus
 from app.core.venv import venv_python as _venv_python
 
 TESTS_DIR = WORKSPACE / "tests"
 MAX_RUNS = 200
+RUN_TIMEOUT = 1800   # 30 мин — потолок на один прогон pytest чужого репозитория
 
 _COLLECT_RE = re.compile(r"^(?P<file>[\w./-]+\.py)::(?P<test>\S+)$")
 _FAILED_RE = re.compile(r"^FAILED (?P<nodeid>\S+)")
@@ -197,7 +201,8 @@ async def run(repo: str, target: str | None, run_id: str, extra_args: list[str] 
         started = datetime.now()
         try:
             proc = await asyncio.create_subprocess_exec(
-                *args, cwd=repo, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                *args, cwd=repo, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                start_new_session=True)
         except FileNotFoundError as exc:
             tr.status = "error"
             tr.stderr = str(exc)
@@ -216,8 +221,27 @@ async def run(repo: str, target: str | None, run_id: str, extra_args: list[str] 
                 await bus.emit("run.output", task_id=run_id, line=line)
 
         assert proc.stdout is not None and proc.stderr is not None
-        await asyncio.gather(_pump(proc.stdout, stdout_lines), _pump(proc.stderr, stderr_lines))
-        await proc.wait()
+        procs.track(proc.pid)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(_pump(proc.stdout, stdout_lines), _pump(proc.stderr, stderr_lines), proc.wait()),
+                timeout=RUN_TIMEOUT)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            tr.returncode = proc.returncode
+            tr.stdout = "\n".join(stdout_lines)
+            tr.stderr = "\n".join(stderr_lines) + f"\n\n[таймаут {RUN_TIMEOUT}с — прогон принудительно остановлен]"
+            tr.duration = (datetime.now() - started).total_seconds()
+            tr.finished_at = datetime.now().isoformat(timespec="seconds")
+            tr.status = "error"
+            store.put(tr)
+            await bus.emit("run.state", task_id=run_id, state="error")
+            return
+        finally:
+            procs.untrack(proc.pid)
 
         tr.returncode = proc.returncode
         tr.stdout = "\n".join(stdout_lines)

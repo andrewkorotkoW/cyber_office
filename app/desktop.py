@@ -18,13 +18,13 @@ import uvicorn
 import webview
 
 from app import config
-from app.main import acquire_lock, app as fastapi_app
 
 log = logging.getLogger("cyber_office.desktop")
 ICON = config.ROOT / "assets" / "icon.png"
 
 
 def _serve(port: int) -> None:
+    from app.main import acquire_lock, app as fastapi_app
     acquire_lock()
     uvicorn.run(fastapi_app, host=config.HOST, port=port, log_level="warning")
 

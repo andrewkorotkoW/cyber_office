@@ -14,11 +14,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app import config
 from app.config import CLAUDE_BIN, MAX_TURNS
+from app.core import procs
 from app.core.events import bus
 
 ALLOWED_TOOLS = ",".join([
@@ -106,41 +109,73 @@ class ClaudeRunner:
         try:
             # limit: одна строка stream-json может нести содержимое большого файла (Read на 100 КБ+);
             # дефолтные 64 КБ StreamReader рвут поток ошибкой «chunk exceed the limit»
+            # start_new_session: своя process group, чтобы по таймауту/остановке можно было
+            # убить процесс целиком вместе с его детьми (os.killpg), а не только сам claude
             proc = await asyncio.create_subprocess_exec(
                 *args, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                limit=32 * 1024 * 1024)
+                limit=32 * 1024 * 1024, start_new_session=True)
         except FileNotFoundError:
             return RunResult(False, "", error=f"claude не найден: {self.binary}")
 
         final: RunResult | None = None
         text_parts: list[str] = []
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
+        stderr_parts: list[str] = []
+
+        async def _read_stdout() -> None:
+            nonlocal final
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = msg.get("type")
+                if t == "assistant":
+                    for block in (msg.get("message") or {}).get("content") or []:
+                        if block.get("type") == "text" and block.get("text"):
+                            text_parts.append(block["text"])
+                            await bus.emit("agent.text", agent, task_id, text=block["text"][:2000])
+                        elif block.get("type") == "tool_use":
+                            await bus.emit("agent.tool", agent, task_id,
+                                           tool=block.get("name"), summary=_summarize_tool(block.get("name", ""), block.get("input") or {}))
+                elif t == "result":
+                    is_error = bool(msg.get("is_error"))
+                    ok = not is_error and msg.get("subtype") == "success"
+                    final = RunResult(ok, msg.get("result") or "\n".join(text_parts[-3:]),
+                                      float(msg.get("total_cost_usd") or 0), int(msg.get("num_turns") or 0),
+                                      None if ok else (msg.get("result") or msg.get("subtype") or "ошибка"),
+                                      is_error_result=is_error)
+
+        async def _read_stderr() -> None:
+            assert proc.stderr is not None
+            async for raw in proc.stderr:
+                stderr_parts.append(raw.decode("utf-8", errors="replace"))
+
+        def _kill_group() -> None:
             try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = msg.get("type")
-            if t == "assistant":
-                for block in (msg.get("message") or {}).get("content") or []:
-                    if block.get("type") == "text" and block.get("text"):
-                        text_parts.append(block["text"])
-                        await bus.emit("agent.text", agent, task_id, text=block["text"][:2000])
-                    elif block.get("type") == "tool_use":
-                        await bus.emit("agent.tool", agent, task_id,
-                                       tool=block.get("name"), summary=_summarize_tool(block.get("name", ""), block.get("input") or {}))
-            elif t == "result":
-                is_error = bool(msg.get("is_error"))
-                ok = not is_error and msg.get("subtype") == "success"
-                final = RunResult(ok, msg.get("result") or "\n".join(text_parts[-3:]),
-                                  float(msg.get("total_cost_usd") or 0), int(msg.get("num_turns") or 0),
-                                  None if ok else (msg.get("result") or msg.get("subtype") or "ошибка"),
-                                  is_error_result=is_error)
-        stderr = (await proc.stderr.read()).decode("utf-8", errors="replace") if proc.stderr else ""
-        await proc.wait()
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        procs.track(proc.pid)
+        try:
+            # stdout и stderr читаются параллельно (не stdout целиком, потом stderr) —
+            # иначе claude, залив stderr между тем как stdout ещё не закрыт, подвесил бы пайп
+            await asyncio.wait_for(asyncio.gather(_read_stdout(), _read_stderr(), proc.wait()),
+                                   timeout=config.AO_TASK_TIMEOUT)
+        except asyncio.TimeoutError:
+            _kill_group()
+            return RunResult(False, "\n".join(text_parts[-3:]), error=f"таймаут {config.AO_TASK_TIMEOUT}с")
+        except asyncio.CancelledError:
+            _kill_group()
+            raise
+        finally:
+            procs.untrack(proc.pid)
+
+        stderr = "".join(stderr_parts)
         if final is None:
             # процесс завершился, ни разу не прислав result-событие (например, упал на
             # авторизации раньше, чем модель успела дать финальный ответ) — не терять
