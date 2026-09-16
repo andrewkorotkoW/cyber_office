@@ -326,9 +326,16 @@ function renderBoard() {
 
 // ---- Планёрка: «ждёт тебя» / «сейчас в работе» / «за сегодня» / «последние события»
 function renderPlanerka() {
+  renderOnboardingHint();
   renderPlanerkaWaiting();
   renderPlanerkaRunning();
   renderPlanerkaEvents();
+}
+
+// первый запуск: workspace пуст (ни одной задачи ни разу) — подсказать про sandbox
+function renderOnboardingHint() {
+  const box = $('#plk-onboarding'); if (!box) return;
+  box.hidden = STATE.tasks.length > 0;
 }
 
 function renderPlanerkaWaiting() {
@@ -574,6 +581,14 @@ $('#btn-new').addEventListener('click', () => {
   speakSpeech('dwight', document.getElementById('new-speech'), Speech.DWIGHT_LINES);
   syncAgentAvatar();
 });
+// подсказка первого запуска: та же форма «Новая задача», но с примером под sandbox
+$('#btn-onboarding-task')?.addEventListener('click', () => {
+  $('#btn-new').click();
+  const sandbox = STATE.repos.find(r => r.replace(/\\/g, '/').endsWith('/sandbox'));
+  if (sandbox) $('#f-repo').value = sandbox;
+  $('#f-title').value = 'percent() в calc.py';
+  $('#f-prompt').value = 'В sandbox/calc.py добавь функцию percent(a, b) — сколько процентов a составляет от b — и тест на неё.';
+});
 $('#f-submit').addEventListener('click', async () => {
   try {
     await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo: $('#f-repo').value, agent: $('#f-agent').value });
@@ -606,7 +621,7 @@ $('#m-submit').addEventListener('click', async () => {
   }
 });
 async function addRepoPrompt() {
-  const path = await uiPrompt('Путь к git-репозиторию', '~/PycharmProjects/bike_fit'); if (!path) return;
+  const path = await uiPrompt('Путь к git-репозиторию', '~/projects/my-repo'); if (!path) return;
   try { await api('/api/repos', 'POST', { path }); await loadState(); } catch (e) { alert(e.message); }
 }
 $('#btn-repo').addEventListener('click', addRepoPrompt);
