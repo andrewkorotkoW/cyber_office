@@ -54,24 +54,6 @@ def acquire_lock() -> None:
     _lock_fh.write(str(os.getpid())); _lock_fh.flush()
     (config.WORKSPACE / "server.pid").write_text(str(os.getpid()))   # его читает подсказка after_merge
 
-office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
-                FakePlanner() if FAKE else ClaudePlanner())
-sockets: set[WebSocket] = set()
-
-
-async def _broadcast(ev) -> None:
-    dead = []
-    for ws in sockets:
-        try:
-            await ws.send_text(ev.to_json())
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        sockets.discard(ws)
-
-bus.subscribe(_broadcast)
-
-
 # ------------------------------------------------------------------ репозитории
 def _repo_entries() -> list[dict]:
     """repos.json: список строк-путей или объектов {"path": ..., "after_merge": "cmd"}."""
@@ -93,6 +75,33 @@ def _after_merge_cmd(repo: str) -> str | None:
         if e["path"] == repo:
             return e.get("after_merge")
     return None
+
+
+def _repo_base(repo: str) -> str | None:
+    """repos.json: "base" — ветка для merge/diff, если её нельзя надёжно определить
+    через origin/HEAD (например, репозиторий без origin)."""
+    for e in _repo_entries():
+        if e["path"] == repo:
+            return e.get("base")
+    return None
+
+
+office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
+                FakePlanner() if FAKE else ClaudePlanner(), base_for=_repo_base)
+sockets: set[WebSocket] = set()
+
+
+async def _broadcast(ev) -> None:
+    dead = []
+    for ws in sockets:
+        try:
+            await ws.send_text(ev.to_json())
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        sockets.discard(ws)
+
+bus.subscribe(_broadcast)
 
 
 async def _run_after_merge(repo: str, task_id: str) -> None:

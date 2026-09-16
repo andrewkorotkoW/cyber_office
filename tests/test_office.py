@@ -46,8 +46,12 @@ async def test_full_cycle_review_merge(workspace):
     assert ok and store.get(t.id).status == "done"
     log = subprocess.run(["git", "log", "--oneline"], cwd=workspace["repo"], capture_output=True, text=True).stdout
     assert "michael: Обновить README" in log
-    import os
-    assert any(f.startswith("notes_michael") for f in os.listdir(workspace["repo"]))   # правка дошла до main
+    # правка дошла до main (в объектах git): approve мерджит во временном worktree и
+    # двигает ветку через update-ref, не трогая рабочую копию пользователя — поэтому
+    # смотрим содержимое ветки через git, а не файлы на диске основного чекаута
+    tracked = subprocess.run(["git", "ls-tree", "-r", "--name-only", "main"],
+                             cwd=workspace["repo"], capture_output=True, text=True).stdout
+    assert any(f.startswith("notes_michael") for f in tracked.splitlines())
     assert not (config.WORKTREES_DIR / t.id).exists()        # worktree убран
     mem = (config.AGENTS_DIR / "michael" / "MEMORY.md").read_text(encoding="utf-8")
     assert "Обновить README" in mem

@@ -9,6 +9,7 @@ import asyncio
 import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta
+from typing import Callable
 
 from app.core import memory, worktree
 from app.core.events import bus
@@ -27,12 +28,30 @@ PROMPT_TEMPLATE = """Задача: {title}
 Когда закончишь — сделай `git add -A && git commit -m "<что сделал>"` и ответь резюме.
 """
 
+PREV_HINT_MARKER = "Предыдущая попытка сохранена в ветке `"
+
+
+def _strip_prev_hint(prompt: str) -> str:
+    """Убирает из промпта прошлую подсказку про -prev (если есть), чтобы на подряд идущих
+    retry в тексте задачи была только одна актуальная — иначе она дублировалась бы на
+    каждый повтор. Подсказка — один абзац, отделённый пустыми строками."""
+    idx = prompt.find(PREV_HINT_MARKER)
+    if idx == -1:
+        return prompt
+    start = prompt.rfind("\n\n", 0, idx)
+    start = start if start != -1 else idx
+    end = prompt.find("\n\n", idx)
+    end = end if end != -1 else len(prompt)
+    return prompt[:start] + prompt[end:]
+
 
 class Office:
     def __init__(self, store: TaskStore, roster: Roster, runner: Runner, planner: Planner | None = None,
-                 auto_retry_delays: tuple[float, ...] = (120.0, 300.0, 900.0), max_auto_retries: int = 3) -> None:
+                 auto_retry_delays: tuple[float, ...] = (120.0, 300.0, 900.0), max_auto_retries: int = 3,
+                 base_for: Callable[[str], str | None] | None = None) -> None:
         self.store, self.roster, self.runner, self.planner = store, roster, runner, planner
         self.auto_retry_delays, self.max_auto_retries = auto_retry_delays, max_auto_retries
+        self.base_for = base_for or (lambda repo: None)   # repos.json: base-ветка репо, если задана явно
         self._running: dict[str, asyncio.Task] = {}
         self._planning: dict[str, asyncio.Task] = {}
         self._auto_retry: dict[str, asyncio.Task] = {}   # task_id -> отложенный автоповтор после сбоя API
@@ -77,12 +96,12 @@ class Office:
                 title=task.title, prompt=task.prompt, cwd=path), path, task.id)
             await worktree.commit_all(path, f"{a.name}: {task.title}")   # если агент забыл закоммитить
             task.result, task.cost_usd, task.turns = res.text, res.cost_usd, res.turns
-            task.diff_stat = await worktree.diff_stat(task.repo, branch)
+            task.diff_stat = await worktree.diff_stat(task.repo, branch, self.base_for(task.repo))
             if res.ok:
                 task.status = "review"; task.finished_at = datetime.now().isoformat(timespec="seconds")
                 task.note("готово, ждёт ревью")
                 task.error, task.auto_retries, task.auto_retry_at = None, 0, None
-                task.behind_main, task.overlap_files = await worktree.staleness(task.repo, branch)
+                task.behind_main, task.overlap_files = await worktree.staleness(task.repo, branch, self.base_for(task.repo))
                 if task.overlap_files:
                     task.note(f"ветка отстала от main на {task.behind_main}, пересекается: {', '.join(task.overlap_files[:5])}")
                 memory.append(a.name, task.title, task.repo, res.text)
@@ -153,18 +172,21 @@ class Office:
             return await worktree.diff_merge_commit(t.repo, t.merge_commit)
         if not t.branch:
             return ""
-        return await worktree.diff_full(t.repo, t.branch)
+        return await worktree.diff_full(t.repo, t.branch, self.base_for(t.repo))
 
     async def approve(self, task_id: str) -> tuple[bool, str]:
         t = self.store.get(task_id)
         if not t or t.status != "review":
             return False, "задача не на ревью"
-        ok, out = await worktree.merge(t.repo, t.branch, f"{t.agent}: {t.title} (#{t.id})")
-        if ok:
-            t.merge_commit = await worktree.head_sha(t.repo)
+        status, out = await worktree.merge(t.repo, t.branch, f"{t.agent}: {t.title} (#{t.id})", self.base_for(t.repo))
+        if status == "ok":
+            t.merge_commit = out
             await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
+            if t.prev_branch:
+                await worktree.remove(t.repo, t.prev_branch, None, delete_branch=True)
+                t.prev_branch = None
             t.status = "done"; t.note("одобрено, влито в main")
-        else:
+        elif status == "conflict":
             # конфликт: не роняем задачу в «ошибка», а сразу отправляем агента переносить
             # готовую работу поверх свежего main (retry сохраняет прошлую ветку и даёт подсказку)
             t.status = "failed"
@@ -173,18 +195,25 @@ class Office:
             await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
             await self.retry(t.id, "Мердж в main конфликтнул. Перенеси свою работу поверх актуального main.")
             return False, "конфликт: задача отправлена на перенос поверх main"
+        else:   # ошибка git, не конфликт — пользователь должен разобраться сам, без автоповтора
+            t.status = "failed"; t.error = out
+            t.note(f"ошибка мерджа: {out[:200]}")
+            self.store.update(t)
+            await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
+            return False, out
         self.store.update(t)
         await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
         await self._check_mission(t.mission_id)
         await self._refresh_staleness(t.repo)
         self.kick_all()          # зависимые задачи могли разблокироваться
-        return ok, out
+        return True, out
 
     async def _refresh_staleness(self, repo: str) -> None:
         """main изменился — пересчитать отставание у всех задач этого репо, ждущих ревью."""
+        base = self.base_for(repo)
         for t in self.store.by_status("review"):
             if t.repo == repo and t.branch:
-                t.behind_main, t.overlap_files = await worktree.staleness(repo, t.branch)
+                t.behind_main, t.overlap_files = await worktree.staleness(repo, t.branch, base)
                 self.store.update(t)
                 await bus.emit("task.updated", t.agent, t.id, task=_pub(t))
 
@@ -207,9 +236,12 @@ class Office:
             return False
         self.cancel_auto_retry(task_id)
         prev = await worktree.keep_previous(t.repo, t.branch, t.worktree)
+        t.prompt = _strip_prev_hint(t.prompt)   # на подряд идущих retry подсказка не должна множиться
+        if prev:
+            t.prev_branch = prev
         if prev and t.diff_stat:
-            base = await worktree.default_branch(t.repo)
-            t.prompt += (f"\n\nПредыдущая попытка сохранена в ветке `{prev}` (она устарела относительно {base}: "
+            base = await worktree.default_branch(t.repo, self.base_for(t.repo))
+            t.prompt += (f"\n\n{PREV_HINT_MARKER}{prev}` (она устарела относительно {base}: "
                          f"другая задача уже изменила те же файлы). Не переделывай с нуля: посмотри "
                          f"`git diff {base}...{prev}`, перенеси готовую работу (`git cherry-pick` коммитов из {prev} "
                          f"или вручную), разреши конфликты в пользу актуального {base} и снова прогони тесты.")
