@@ -1,3 +1,4 @@
 [
-  { "path": "~/projects/my-repo" }
+  { "path": "~/projects/my-repo" },
+  { "path": "~/projects/other-repo", "base": "develop" }
 ]

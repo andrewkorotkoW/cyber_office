@@ -6,6 +6,7 @@ import asyncio
 import logging
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
 from app.config import WORKTREES_DIR
@@ -25,9 +26,21 @@ async def is_repo(path: str) -> bool:
     return code == 0
 
 
-async def default_branch(repo: str) -> str:
-    code, out = await _git(repo, "symbolic-ref", "--short", "HEAD")
-    return out if code == 0 and out else "main"
+async def default_branch(repo: str, base: str | None = None) -> str:
+    """База для diff/merge: (а) явно заданная в repos.json (`base`) — используем как есть;
+    (б) иначе ветка, на которую указывает origin/HEAD (без префикса `origin/`);
+    (в) иначе первая существующая из main/master. НЕ текущий HEAD рабочей копии —
+    им может быть чужая ветка пользователя или detached HEAD (см. ревью 2026-09-16)."""
+    if base:
+        return base
+    code, out = await _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if code == 0 and out:
+        return out.split("/", 1)[1] if out.startswith("origin/") else out
+    for name in ("main", "master"):
+        code, _ = await _git(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{name}")
+        if code == 0:
+            return name
+    return "main"
 
 
 async def create(repo: str, task_id: str) -> tuple[str, str]:
@@ -116,15 +129,15 @@ async def commit_all(worktree: str, message: str) -> bool:
     return code == 0
 
 
-async def diff_stat(repo: str, branch: str) -> str:
-    base = await default_branch(repo)
-    _, out = await _git(repo, "diff", "--stat", f"{base}...{branch}")
+async def diff_stat(repo: str, branch: str, base: str | None = None) -> str:
+    resolved = await default_branch(repo, base)
+    _, out = await _git(repo, "diff", "--stat", f"{resolved}...{branch}")
     return out
 
 
-async def diff_full(repo: str, branch: str, limit: int = 200_000) -> str:
-    base = await default_branch(repo)
-    _, out = await _git(repo, "diff", f"{base}...{branch}")
+async def diff_full(repo: str, branch: str, base: str | None = None, limit: int = 200_000) -> str:
+    resolved = await default_branch(repo, base)
+    _, out = await _git(repo, "diff", f"{resolved}...{branch}")
     return out[:limit] + ("\n…(обрезано)" if len(out) > limit else "")
 
 
@@ -138,18 +151,42 @@ async def diff_merge_commit(repo: str, commit: str, limit: int = 200_000) -> str
     return out[:limit] + ("\n…(обрезано)" if len(out) > limit else "")
 
 
-async def merge(repo: str, branch: str, message: str) -> tuple[bool, str]:
-    """Вливает ветку агента в main без fast-forward, чтобы задача была видна в истории."""
-    base = await default_branch(repo)
-    code, out = await _git(repo, "checkout", "-q", base)
+async def merge(repo: str, branch: str, message: str, base: str | None = None) -> tuple[str, str]:
+    """Вливает ветку агента в base без fast-forward — в отдельном временном detached
+    worktree, а не в основном чекауте репозитория: тот принадлежит пользователю (может
+    быть грязным или переключён на другую ветку) и его нельзя трогать.
+
+    --detach обязателен: base почти наверняка уже выведена в рабочую копию пользователя,
+    а git не даёт вывести одну и ту же ветку в двух worktree одновременно без него.
+
+    Возвращает (status, sha_or_output): status — 'ok' (sha влитого коммита),
+    'conflict' (настоящий конфликт мерджа — вывод git merge --abort уже сделан) или
+    'failed' (прочая ошибка git — полный вывод, без автоповтора со стороны Office)."""
+    resolved = await default_branch(repo, base)
+    tmp = WORKTREES_DIR / f"_merge_{uuid.uuid4().hex[:8]}"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    code, out = await _git(repo, "worktree", "add", "--detach", str(tmp), resolved)
     if code != 0:
-        return False, out
-    code, out = await _git(repo, "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
-                           "merge", "--no-ff", "-q", "-m", message, branch)
-    if code != 0:
-        await _git(repo, "merge", "--abort")
-        return False, out
-    return True, out
+        return "failed", out
+    try:
+        code, out = await _git(str(tmp), "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
+                               "merge", "--no-ff", "-q", "-m", message, branch)
+        if code != 0:
+            if "CONFLICT" in out:
+                await _git(str(tmp), "merge", "--abort")
+                return "conflict", out
+            return "failed", out
+        code, sha = await _git(str(tmp), "rev-parse", "HEAD")
+        if code != 0:
+            return "failed", sha
+        code, out = await _git(repo, "update-ref", f"refs/heads/{resolved}", sha)
+        if code != 0:
+            return "failed", out
+        return "ok", sha
+    finally:
+        await _git(repo, "worktree", "remove", "--force", str(tmp))
+        shutil.rmtree(tmp, ignore_errors=True)
+        await _git(repo, "worktree", "prune")
 
 
 async def remove(repo: str, branch: str | None, worktree: str | None, delete_branch: bool) -> None:
@@ -176,18 +213,18 @@ async def keep_previous(repo: str, branch: str | None, worktree: str | None) -> 
     return prev if code == 0 else None
 
 
-async def staleness(repo: str, branch: str) -> tuple[int, list[str]]:
-    """Насколько ветка агента отстала от main: (коммитов в main после точки ветвления,
+async def staleness(repo: str, branch: str, base: str | None = None) -> tuple[int, list[str]]:
+    """Насколько ветка агента отстала от base: (коммитов в base после точки ветвления,
     файлы, которые менялись и там, и там — кандидаты на конфликт при мердже)."""
-    base = await default_branch(repo)
-    code, fork = await _git(repo, "merge-base", base, branch)
+    resolved = await default_branch(repo, base)
+    code, fork = await _git(repo, "merge-base", resolved, branch)
     if code != 0 or not fork:
         return 0, []
-    _, behind = await _git(repo, "rev-list", "--count", f"{fork}..{base}")
+    _, behind = await _git(repo, "rev-list", "--count", f"{fork}..{resolved}")
     behind_n = int(behind or 0)
     if behind_n == 0:
         return 0, []
-    _, main_files = await _git(repo, "diff", "--name-only", f"{fork}..{base}")
+    _, main_files = await _git(repo, "diff", "--name-only", f"{fork}..{resolved}")
     _, br_files = await _git(repo, "diff", "--name-only", f"{fork}..{branch}")
     overlap = sorted(set(main_files.split()) & set(br_files.split()))
     return behind_n, overlap
