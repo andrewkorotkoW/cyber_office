@@ -1077,3 +1077,15 @@ document.getElementById('f-agent')?.addEventListener('change', syncAgentAvatar);
     });
   }
 })();
+
+// Клик по затемнению вокруг любого модального окна закрывает его (для окна вопроса — как «Отмена»).
+document.querySelectorAll('dialog').forEach((dlg) => {
+  dlg.addEventListener('click', (e) => {
+    if (e.target !== dlg) return;                       // клик внутри окна — не трогаем
+    const r = dlg.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (inside) return;                                  // клик по «пустому» месту самого окна (padding)
+    if (dlg.id === 'dlg-ask') { const c = dlg.querySelector('#ask-cancel'); (c && !c.hidden ? c : dlg.querySelector('#ask-ok')).click(); return; }
+    dlg.close();
+  });
+});
