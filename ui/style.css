@@ -230,14 +230,20 @@ dialog.ask .ask-btns { display:flex; gap:8px; justify-content:flex-end }
 .agent-pick select { flex:1 }
 .pick-avatar { width:34px; height:34px; image-rendering:pixelated; border:2px solid var(--line); flex:none }
 
-/* персонаж в шапке окна — как у Пэм в диалоге: портрет 96px + имя неоном */
-dialog .head { align-items:flex-start }
-dialog .head .head-person { display:flex; flex-direction:column; align-items:center; gap:6px; flex:none; margin-right:6px }
-dialog .head .head-person img, dialog .head .head-person .live-portrait { width:96px; height:96px; image-rendering:pixelated; border:3px solid var(--who,#ff4fa3); box-shadow:0 0 10px var(--who,#ff4fa3) }
+/* персонаж в шапке окна — как у Пэм в диалоге: портрет 96px + имя неоном + реплика (печатается
+   по буквам, ui/speech.js::typeMessage — та же функция, что у Пэм в dlg-ask). .head — двухстрочный
+   flex: заголовок+закрыть сверху (order:-1), портрет+реплика — на всю ширину шапки ниже */
+dialog .head { align-items:flex-start; flex-wrap:wrap }
+#dlg-new .head h3, #dlg-mission .head h3 { order:-1; align-self:center }
+#dlg-new .head > button.small, #dlg-mission .head > button.small { order:-1 }
+dialog .head .head-person { display:flex; align-items:flex-start; gap:10px; flex:1 1 100%; order:1; margin-top:8px }
+dialog .head .head-person img, dialog .head .head-person .live-portrait { width:96px; height:96px; image-rendering:pixelated; border:3px solid var(--who,#ff4fa3); box-shadow:0 0 10px var(--who,#ff4fa3); flex:none }
+dialog .head .head-person-text { flex:1; min-width:0 }
 dialog .head .head-person .who { color:var(--who,#ff4fa3); font-size:12px; letter-spacing:1px; text-transform:uppercase; text-shadow:0 0 6px var(--who,#ff4fa3) }
+dialog .head .speech { font-size:14px; line-height:1.45; white-space:pre-wrap; min-height:1.45em; margin-top:4px }
+dialog .head .speech.error { color:var(--accent) }
 dialog .head .head-person.dwight { --who:#ff9a3c }
 dialog .head .head-person.michael { --who:#4f8cff }
-dialog .head h3 { align-self:center }
 
 /* живой портрет (ui/portrait_anim.js): фон — спрайт-лента 4х256px, кадр меняется background-position */
 .live-portrait { background-repeat:no-repeat; background-size:400% 100%; image-rendering:pixelated; transition:filter .3s ease, transform .3s ease, box-shadow .3s ease }

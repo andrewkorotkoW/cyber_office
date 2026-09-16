@@ -39,24 +39,29 @@ const avatarImg = (n, size = 24) => { const a = STATE.agents.find(x => x.name ==
 const PORTRAITS = {};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ERROR_TEXT_RE = /ошибк|error|failed|не удал/i;
-// печать сообщения ask-диалога посимвольно (~18мс/символ), клик — пропустить; возвращает Promise<void>
-function typeAskMessage(el, text, msPerChar = 18) {
-  return new Promise((resolve) => {
-    el.textContent = '';
-    const s = String(text ?? '');
-    if (!s) { resolve(); return; }
-    let i = 0, done = false;
-    const finish = () => { if (done) return; done = true; el.textContent = s; el.removeEventListener('click', skip); resolve(); };
-    const skip = () => finish();
-    el.addEventListener('click', skip);
-    const step = () => {
-      if (done) return;
-      i++; el.textContent = s.slice(0, i);
-      if (i >= s.length) finish(); else setTimeout(step, msPerChar);
-    };
-    step();
-  });
+// печать реплики персонажа в шапке диалога (Пэм в dlg-ask, Дуайт/Майкл в dlg-new/dlg-mission):
+// Speech.typeMessage (ui/speech.js) печатает посимвольно и возвращает Promise с .cancel(), портрет
+// key из PORTRAITS шевелит ртом ровно на время печати; SPEECH_TYPING хранит текущую печать для
+// остановки при закрытии диалога (см. addEventListener('close', ...) ниже).
+const SPEECH_TYPING = {};
+function prefersReducedMotion() {
+  try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
 }
+function typeSpeech(key, el, text, msPerChar = 18, { error = false } = {}) {
+  if (el) el.classList.toggle('error', !!error);
+  const inst = PORTRAITS[key];
+  if (prefersReducedMotion()) {
+    if (el) el.textContent = String(text == null ? '' : text);
+    if (inst) inst.talk(0);
+    return Promise.resolve();
+  }
+  const ms = Math.max(300, String(text == null ? '' : text).length * msPerChar);
+  if (inst) inst.talk(ms);
+  const p = el ? Speech.typeMessage(el, text, msPerChar) : Promise.resolve();
+  SPEECH_TYPING[key] = p;
+  return p.then(() => { if (inst) inst.talk(0); });
+}
+const speakSpeech = (key, el, lines, msPerChar = 18) => typeSpeech(key, el, Speech.pickLine(lines), msPerChar);
 
 // Свой диалог вместо системных prompt/confirm/alert (у системных — чужой шрифт и питоновская ракета).
 function uiAsk(message, { input = false, placeholder = '', ok = 'OK', cancel = 'Отмена', cancelable = true } = {}) {
@@ -72,16 +77,14 @@ function uiAsk(message, { input = false, placeholder = '', ok = 'OK', cancel = '
     d.showModal(); if (input) inp.focus(); else bOk.focus();
     const pam = window.LivePortrait ? (PORTRAITS.pam = window.LivePortrait.mount(document.getElementById('ask-avatar'), 'pink.png')) : null;
     if (pam) pam.mood(ERROR_TEXT_RE.test(String(message ?? '')) ? 'worried' : 'neutral');
-    const typingMs = Math.max(300, String(message ?? '').length * 18);
-    if (pam) pam.talk(typingMs);
-    typeAskMessage(msg, message).then(() => { if (pam) pam.talk(0); });
+    typeSpeech('pam', msg, message, 18);
   });
 }
 const uiPrompt = (message, placeholder = '') => uiAsk(message, { input: true, placeholder });
 const uiConfirm = (message) => uiAsk(message, { ok: 'Да', cancel: 'Нет' });
 const uiAlert = (message) => uiAsk(message, { ok: 'Понятно', cancelable: false });
 window.alert = (m) => { uiAlert(String(m)); };
-document.getElementById('dlg-ask')?.addEventListener('close', () => PORTRAITS.pam?.stop());
+document.getElementById('dlg-ask')?.addEventListener('close', () => { PORTRAITS.pam?.stop(); SPEECH_TYPING.pam?.cancel?.(); });
 
 async function loadState() {
   STATE = await api('/api/state');
@@ -560,29 +563,47 @@ function mountHeadPortrait(key, elId, file) {
   if (!window.LivePortrait) return null;
   const inst = window.LivePortrait.mount(document.getElementById(elId), file);
   PORTRAITS[key] = inst;
-  if (inst) inst.talk(1800 + Math.random() * 700);
   return inst;
 }
-document.getElementById('dlg-new')?.addEventListener('close', () => { PORTRAITS.dwight?.stop(); PORTRAITS.pick?.stop(); });
-document.getElementById('dlg-mission')?.addEventListener('close', () => PORTRAITS.michael?.stop());
+document.getElementById('dlg-new')?.addEventListener('close', () => { PORTRAITS.dwight?.stop(); PORTRAITS.pick?.stop(); SPEECH_TYPING.dwight?.cancel?.(); });
+document.getElementById('dlg-mission')?.addEventListener('close', () => { PORTRAITS.michael?.stop(); SPEECH_TYPING.michael?.cancel?.(); });
 
-$('#btn-new').addEventListener('click', () => { $('#dlg-new').showModal(); mountHeadPortrait('dwight', 'new-avatar', 'cyborg.png'); syncAgentAvatar(); });
+$('#btn-new').addEventListener('click', () => {
+  $('#dlg-new').showModal();
+  mountHeadPortrait('dwight', 'new-avatar', 'cyborg.png');
+  speakSpeech('dwight', document.getElementById('new-speech'), Speech.DWIGHT_LINES);
+  syncAgentAvatar();
+});
 $('#f-submit').addEventListener('click', async () => {
   try {
     await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo: $('#f-repo').value, agent: $('#f-agent').value });
     $('#f-title').value = ''; $('#f-prompt').value = '';
-    if (PORTRAITS.dwight) { PORTRAITS.dwight.mood('happy', 1500); await sleep(1500); }
+    PORTRAITS.dwight?.mood('happy', 1600);
+    await typeSpeech('dwight', document.getElementById('new-speech'), 'Принял, отдаю в работу.', 10);
+    await sleep(800);
     $('#dlg-new').close(); await loadState();
-  } catch (e) { alert(e.message); }
+  } catch (e) {
+    PORTRAITS.dwight?.mood('worried');
+    await typeSpeech('dwight', document.getElementById('new-speech'), e.message, 10, { error: true });
+  }
 });
-$('#btn-mission').addEventListener('click', () => { $('#dlg-mission').showModal(); mountHeadPortrait('michael', 'mission-avatar', 'beard.png'); });
+$('#btn-mission').addEventListener('click', () => {
+  $('#dlg-mission').showModal();
+  mountHeadPortrait('michael', 'mission-avatar', 'beard.png');
+  speakSpeech('michael', document.getElementById('mission-speech'), Speech.MICHAEL_LINES);
+});
 $('#m-submit').addEventListener('click', async () => {
   try {
     await api('/api/missions', 'POST', { goal: $('#m-goal').value, repo: $('#m-repo').value });
     $('#m-goal').value = '';
-    if (PORTRAITS.michael) { PORTRAITS.michael.mood('happy', 1500); await sleep(1500); }
+    PORTRAITS.michael?.mood('happy', 1600);
+    await typeSpeech('michael', document.getElementById('mission-speech'), 'Понял. Иду планировать.', 10);
+    await sleep(800);
     $('#dlg-mission').close(); await loadState();
-  } catch (e) { alert(e.message); }
+  } catch (e) {
+    PORTRAITS.michael?.mood('worried');
+    await typeSpeech('michael', document.getElementById('mission-speech'), e.message, 10, { error: true });
+  }
 });
 async function addRepoPrompt() {
   const path = await uiPrompt('Путь к git-репозиторию', '~/PycharmProjects/bike_fit'); if (!path) return;
