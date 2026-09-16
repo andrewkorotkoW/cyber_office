@@ -498,6 +498,18 @@
     o.restore();
   }
 
+  // ---------------------------------------------------------------- подгонка сцены под контейнер (letterbox 16:9)
+  // чистая функция: масштаб — дробный (не только целые кратные), чтобы сцена вписывалась в контейнер любого
+  // размера без обрезки и без искажения пропорций; если дробный масштаб близок к целому — снапаем к целому,
+  // чтобы пиксели spriteов оставались ровными (без размытия на дробных долях пикселя)
+  function fitScale(W, H, LW, LH) {
+    let s = Math.min(W / LW, H / LH);
+    const r = Math.round(s);
+    if (r > 0 && Math.abs(s - r) < 0.08) s = r;
+    s = Math.max(0.5, s);
+    return { scale: s, ox: (W - LW * s) / 2, oy: (H - LH * s) / 2 };
+  }
+
   // ---------------------------------------------------------------- подписи с читаемостью на тёмной cyberpunk-сцене
   // на cyberpunk — тёмная обводка под текстом перед заливкой; на arcade/gameboy — как раньше, без обводки
   function drawLabel(text, x, y, color) {
@@ -510,6 +522,18 @@
   function setBackground(url) {
     if (!url) { bgImg = null; return; }
     const im = new Image(); im.onload = () => { bgImg = im; }; im.src = url;
+  }
+  // фон рисуется в мировых координатах offscreen-канваса (768×432) — тогда он масштабируется вместе
+  // со сценой через общий drawImage в frame(), а не отдельным CSS background на самом <canvas>.
+  // cover: фото обрезается по короткой стороне и центрируется, пропорции фото не искажаются.
+  function drawCoverImage(g, img, dx, dy, dw, dh) {
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return;
+    const ir = iw / ih, tr = dw / dh;
+    let sx, sy, sw, sh;
+    if (ir > tr) { sh = ih; sw = sh * tr; sx = (iw - sw) / 2; sy = 0; }
+    else { sw = iw; sh = sw / tr; sx = 0; sy = (ih - sh) / 2; }
+    g.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
   }
 
   // ---- cyberpunk: ночной кабинет с панорамным окном; статичные слои кэшируются в отдельный canvas
@@ -1003,7 +1027,7 @@
 
   function drawWorld(t) {
     if (bgImg) { // картинка вместо пола/стены; мебель и люди рисуются поверх
-      o.drawImage(bgImg, 0, 0, LW, LH);
+      drawCoverImage(o, bgImg, 0, 0, LW, LH);
       sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5));
       return;
     }
@@ -1094,14 +1118,21 @@
     }
   }
 
+  // размеры контейнера 0×0 бывают, пока панель/вкладка скрыта (display:none) — тогда просто пропускаем
+  // пересчёт и оставляем прежние W/H/scale/ox/oy (следующий ResizeObserver-тик с реальным размером
+  // пересчитает всё как надо; писать в canvas.width=0 здесь незачем, лишь оставит холст «протухшим»)
+  function applyResize(w, h) {
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    W = w; H = h;
+    const fit = fitScale(W, H, LW, LH);
+    scale = fit.scale; ox = fit.ox; oy = fit.oy;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
   function resize() {
     const box = canvas.parentElement.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    W = box.width; H = box.height;
-    canvas.width = W * dpr; canvas.height = H * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    scale = Math.max(1, Math.floor(Math.min(W / LW, H / LH)));
-    ox = Math.floor((W - LW * scale) / 2); oy = Math.floor((H - LH * scale) / 2);
+    applyResize(box.width, box.height);
   }
 
   function frame(t) {
@@ -1112,7 +1143,9 @@
     o.clearRect(0, 0, LW, LH);
     drawWorld(t);
     ctx.fillStyle = TH.floor2; ctx.fillRect(0, 0, W, H);
-    ctx.imageSmoothingEnabled = false;
+    // дробный масштаб < 1 без сглаживания даёт «дырки» между пикселями спрайта — включаем сглаживание
+    // только для уменьшения; при масштабе ≥1 (в т.ч. дробном, например 1.4) чёткие грани важнее
+    ctx.imageSmoothingEnabled = scale < 1;
     ctx.drawImage(off, ox, oy, LW * scale, LH * scale);
     requestAnimationFrame(frame);
   }
@@ -1130,6 +1163,18 @@
 
   if (hasDOM) {
     window.addEventListener('resize', resize);
+    // ResizeObserver ловит и изменение размера окна, и смену вкладки Планёрка/Офис (display:none → flex),
+    // и раскрытие мобильной полоски (.expanded) — везде, где меняется реальный размер контейнера, а не
+    // только window — window.resize один этот случай не покрывает.
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const cr = entry.contentRect;
+          applyResize(cr.width, cr.height);
+        }
+      });
+      ro.observe(canvas.parentElement);
+    }
     window.Floor = { setAgents, setState, envelope, setBackground, setTheme };
     document.fonts && document.fonts.load('8px "Pixelify Sans"').catch(() => {});
     requestAnimationFrame(frame);
@@ -1142,6 +1187,7 @@
       LW, LH, deskX, computeDeskPositions, isInsideObstacle, pointOutsideObstacles, sceneObstacleRects, CYBER_DESK_BANDS,
       characterFor, CHAR_PALETTE, CHAR_HEADS, humanRows, DESK_FOOT, DESK_MIN_GAP,
       PET_COUNT, segmentIntersectsRect, computeDogRoute, dogShouldChase, DOG_CHASE_RADIUS, DOG_CHASE_COOLDOWN_MS, DOG_ROUTE_MARGIN,
+      fitScale,
     };
   }
 })();
