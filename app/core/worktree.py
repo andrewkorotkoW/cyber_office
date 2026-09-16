@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
+import sys
 from pathlib import Path
 
 from app.config import WORKTREES_DIR
+
+log = logging.getLogger(__name__)
 
 
 async def _git(repo: str | Path, *args: str) -> tuple[int, str]:
@@ -49,9 +53,39 @@ async def create(repo: str, task_id: str) -> tuple[str, str]:
 ENV_LINKS = (".venv", "venv", "node_modules", ".env")
 
 
+async def _link_one(src: Path, dst: Path) -> bool:
+    """symlink на оригинал; на Windows он требует прав (обычно только dev-режим/админ) —
+    тогда junction для каталога (`mklink /J`, прав не требует) или копия для файла.
+    Ничего не вышло — просто лог и продолжаем без этого куска окружения, чем ронять
+    создание задачи из-за одного .env, который агент, возможно, и не тронет."""
+    try:
+        dst.symlink_to(src)
+        return True
+    except OSError:
+        pass
+    if sys.platform != "win32":
+        return False
+    if src.is_dir():
+        proc = await asyncio.create_subprocess_exec(
+            "cmd", "/c", "mklink", "/J", str(dst), str(src),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await proc.wait()
+        if dst.exists():
+            return True
+        log.warning("не удалось создать junction %s -> %s", dst, src)
+        return False
+    try:
+        shutil.copy2(src, dst)
+        return True
+    except OSError:
+        log.warning("не удалось скопировать %s в %s", src, dst)
+        return False
+
+
 async def _link_env(repo: Path, worktree: Path) -> None:
     """Окружение проекта не в git (.venv, node_modules, .env) — без него агент не может
-    запустить тесты, а ставить пакеты ему запрещено. Подкладываем symlink'и на оригиналы.
+    запустить тесты, а ставить пакеты ему запрещено. Подкладываем symlink'и на оригиналы
+    (на Windows без прав на symlink — junction/копия, см. _link_one).
 
     Symlink для git — файл, и правило `.venv/` (со слэшем) его НЕ игнорирует, так что
     `git add -A` закоммитил бы ссылку. Поэтому пишем имена в `.git/info/exclude` проекта:
@@ -59,11 +93,8 @@ async def _link_env(repo: Path, worktree: Path) -> None:
     linked = []
     for name in ENV_LINKS:
         src, dst = repo / name, worktree / name
-        if src.exists() and not dst.exists():
-            try:
-                dst.symlink_to(src); linked.append(name)
-            except OSError:
-                pass
+        if src.exists() and not dst.exists() and await _link_one(src, dst):
+            linked.append(name)
     if not linked:
         return
     code, common = await _git(worktree, "rev-parse", "--git-common-dir")

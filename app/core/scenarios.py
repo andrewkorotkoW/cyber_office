@@ -16,6 +16,7 @@ import httpx
 from app.config import WORKSPACE
 from app.core import testlab
 from app.core.events import bus
+from app.core.venv import venv_bin
 
 BASE_URL = "http://localhost:8501"
 SCENARIOS_DIR = WORKSPACE / "tests" / "bike_fit" / "scenarios"
@@ -105,7 +106,7 @@ async def ensure_streamlit_running(repo: str, timeout: float = 25.0) -> None:
         if await _alive():
             return
         if _streamlit_proc is None or _streamlit_proc.returncode is not None:
-            streamlit = Path(repo) / ".venv" / "bin" / "streamlit"
+            streamlit = venv_bin(repo, "streamlit")
             _streamlit_proc = await asyncio.create_subprocess_exec(
                 str(streamlit), "run", "app.py", "--server.headless", "true", cwd=repo,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
@@ -130,7 +131,7 @@ async def start_recording(repo: str) -> None:
         await bus.emit("scenario.recorded", error=str(exc))
         return
     ensure_scenarios_dir()
-    python = Path(repo) / ".venv" / "bin" / "python"
+    python = venv_bin(repo, "python")
     tmp = SCENARIOS_DIR / f".recording-{datetime.now():%Y%m%d_%H%M%S}.py"
     proc = await asyncio.create_subprocess_exec(
         str(python), "-m", "playwright", "codegen", BASE_URL,

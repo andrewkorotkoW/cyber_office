@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from app.config import WORKSPACE
 from app.core.events import bus
+from app.core.venv import venv_python as _venv_python
 
 TESTS_DIR = WORKSPACE / "tests"
 MAX_RUNS = 200
@@ -27,10 +29,6 @@ _locks: dict[str, asyncio.Lock] = {}
 
 def _lock(repo: str) -> asyncio.Lock:
     return _locks.setdefault(repo, asyncio.Lock())
-
-
-def _venv_python(repo: str) -> Path:
-    return Path(repo) / ".venv" / "bin" / "python"
 
 
 def _run_dir(repo: str) -> Path:
@@ -52,12 +50,16 @@ def allure_report_dir(repo: str, run_id: str) -> Path:
 def _allure_pytest_installed(repo: str) -> bool:
     """Смотрим в site-packages репозитория, а не запускаем его python: у сценариев в
     тестах .venv/bin/python — поддельный shell-скрипт, который отвечает на любые
-    аргументы, так что `python -c "import allure"` там ничего не значит."""
+    аргументы, так что `python -c "import allure"` там ничего не значит.
+
+    Layout .venv отличается по ОС: POSIX — .venv/lib/python*/site-packages, Windows —
+    .venv/Lib/site-packages (без версии в пути)."""
     venv = Path(repo) / ".venv"
     if not venv.is_dir():
         return False
-    for site in venv.glob("lib/python*/site-packages"):
-        if any(site.glob("allure_pytest*")):
+    sites = [venv / "Lib" / "site-packages"] if sys.platform == "win32" else venv.glob("lib/python*/site-packages")
+    for site in sites:
+        if site.is_dir() and any(site.glob("allure_pytest*")):
             return True
     return False
 
@@ -68,7 +70,7 @@ async def discover(repo: str) -> dict:
     .venv не найден — возвращаем понятную ошибку, а не падаем."""
     python = _venv_python(repo)
     if not python.exists():
-        return {"error": f"не найден .venv/bin/python в {repo}", "tree": {}}
+        return {"error": f"не найден {python} в {repo}", "tree": {}}
     proc = await asyncio.create_subprocess_exec(
         str(python), "-m", "pytest", "--collect-only", "-q", cwd=repo,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -182,7 +184,7 @@ async def run(repo: str, target: str | None, run_id: str, extra_args: list[str] 
 
     if not python.exists():
         tr.status = "error"
-        tr.stderr = f"не найден .venv/bin/python в {repo}"
+        tr.stderr = f"не найден {python} в {repo}"
         tr.finished_at = datetime.now().isoformat(timespec="seconds")
         store.put(tr)
         await bus.emit("run.state", task_id=run_id, state="error")

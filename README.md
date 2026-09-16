@@ -3,15 +3,51 @@
 Локальный «обезьяний офис» агентов Claude Code: задачи → агент в своём git worktree →
 diff на ревью → мердж в main. Без облаков и аккаунтов, только твоя подписка.
 
-## Запуск
+## Установка и запуск
+
+Сервер и интерфейс работают одинаково на macOS, Linux и Windows: нужен Python 3.11+,
+git и CLI `claude` (Claude Code) с выполненным входом в аккаунт (`claude` → `/login`).
+Само окно .app (`app/desktop.py`, `scripts/build_app.sh`) — только для macOS; на
+остальных ОС просто открывай интерфейс в браузере по адресу ниже.
+
+**macOS / Linux:**
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# .env — при необходимости токены/настройки (AO_TG_TOKEN, AO_CLAUDE_BIN, …), см. разделы ниже
 .venv/bin/python -m app.main            # http://127.0.0.1:8600
 AO_FAKE=1 .venv/bin/python -m app.main  # имитация агентов — смотреть интерфейс без логина
 ```
 
-Нужен CLI `claude` (`~/.local/bin/claude`) и вход в аккаунт: `claude` → `/login`.
+Открой `http://127.0.0.1:8600` в браузере.
+
+Постоянно работающий сервер на Linux (без терминала) — пример systemd-юнита в
+`scripts/cyber_office.service` (пути и `User=` внутри — подставить свои):
+
+```bash
+sudo cp scripts/cyber_office.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now cyber_office
+```
+
+**Windows (PowerShell):**
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m app.main            # http://127.0.0.1:8600
+$env:AO_FAKE=1; .\.venv\Scripts\python.exe -m app.main  # имитация агентов
+```
+
+Или запусти `scripts\run_windows.ps1` (либо `scripts\run_windows.bat`) из корня
+проекта — они сами переходят в папку проекта и запускают `.venv\Scripts\python.exe`.
+Claude Code CLI на Windows ставится как `claude.exe`/`claude.cmd` — если он не в
+`PATH`, укажи путь явно через `AO_CLAUDE_BIN` (см. ниже). Затем открой
+`http://127.0.0.1:8600` в браузере.
+
+**Поиск `claude`:** переменная `AO_CLAUDE_BIN` (если задана) побеждает всё
+остальное; иначе ищем `claude` в `PATH` (на Windows — `claude.cmd`/`claude.exe`);
+если нигде не нашли — пробуем `~/.local/bin/claude`. Сервер отказывается стартовать
+(кроме `AO_FAKE=1`) с понятной ошибкой, если ничего не нашлось.
 
 ## Интерфейс
 

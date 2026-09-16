@@ -1,0 +1,20 @@
+# Пример systemd-юнита для Linux — постоянно работающий сервер без .app-окна.
+# Поставить: sudo cp scripts/cyber_office.service /etc/systemd/system/
+#            sudo systemctl daemon-reload && sudo systemctl enable --now cyber_office
+# Путь ниже (WorkingDirectory/ExecStart) и User — подставить свои.
+[Unit]
+Description=cyber_office — локальный офис агентов Claude Code
+After=network.target
+
+[Service]
+Type=simple
+User=cyberoffice
+WorkingDirectory=/opt/cyber_office
+ExecStart=/opt/cyber_office/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=3
+# AO_CLAUDE_BIN=/home/cyberoffice/.local/bin/claude — если claude не в PATH этого юзера
+# AO_HOST=0.0.0.0 — открыть доступ не только с localhost
+
+[Install]
+WantedBy=multi-user.target

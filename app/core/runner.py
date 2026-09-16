@@ -25,7 +25,9 @@ ALLOWED_TOOLS = ",".join([
     "Read", "Edit", "Write", "MultiEdit", "Grep", "Glob", "LS", "TodoWrite",
     "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git add*)", "Bash(git commit*)",
     "Bash(git show*)", "Bash(git cherry-pick*)", "Bash(git merge*)", "Bash(git branch*)",
-    "Bash(ls*)", "Bash(cat*)", "Bash(python*)", "Bash(python3*)", "Bash(pytest*)", "Bash(./.venv/bin/*)", "Bash(.venv/bin/*)", "Bash(*/.venv/bin/*)",
+    "Bash(ls*)", "Bash(cat*)", "Bash(python*)", "Bash(python3*)", "Bash(pytest*)",
+    "Bash(./.venv/bin/*)", "Bash(.venv/bin/*)", "Bash(*/.venv/bin/*)",
+    "Bash(.venv/Scripts/*)", "Bash(./.venv/Scripts/*)", "Bash(*/.venv/Scripts/*)",   # тот же .venv на Windows
     "Bash(npm test*)", "Bash(npm run*)", "Bash(node*)", "Bash(make*)",
 ])
 
