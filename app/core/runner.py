@@ -66,6 +66,8 @@ def infra_failure_reason(res: RunResult) -> str | None:
     if res.ok:
         return None
     haystack = f"{res.error or ''}\n{res.text or ''}".lower()
+    if "max_turns" in haystack:          # лимит ходов — задача велика, а не сбой сети: автоповтор не нужен
+        return None
     matched = next((m for m in INFRA_MARKERS if m in haystack), None)
     snippet = " ".join((res.text or res.error or "").split())[:300]
     if matched:
