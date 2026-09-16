@@ -668,10 +668,44 @@ function termLine(cls, who, text, agent, repo) {
   while (EVENTS_BUFFER.length > 10) EVENTS_BUFFER.shift();
   renderPlanerkaEvents();
 }
+// упрощённый рендер строки ленты для истории (без побочных эффектов: без pushNotification,
+// Floor.*, повторных loadState()/loadPlanerkaSummary()) — та же логика построения текста, что и
+// в живом обработчике ниже, но только термLine + EVENTS_BUFFER.
+function renderHistoryEvent(ev) {
+  const who = ev.agent ? agentTitle(ev.agent) : 'офис';
+  if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary, ev.agent, ev.data.task && ev.data.task.repo);
+  else if (ev.kind === 'agent.text') termLine('text', who, ev.data.text, ev.agent);
+  else if (ev.kind === 'agent.state') termLine('state', who, { working: '▶ взял задачу', planning: '🧭 планирует миссию', idle: '■ свободен' }[ev.data.state] || ev.data.state, ev.agent);
+  else if (ev.kind === 'mission.created' || ev.kind === 'mission.updated') termLine('state', 'офис', `🎯 миссия ${MISSION_RU[ev.data.mission.status] || ev.data.mission.status}: ${ev.data.mission.goal.slice(0, 80)}`, 'michael', ev.data.mission.repo);
+  else if (ev.kind === 'task.created') termLine('state', 'ты', '✉ задача: ' + ev.data.task.title, ev.agent, ev.data.task.repo);
+  else if (ev.kind === 'task.updated') {
+    const t = ev.data.task;
+    termLine('state', who, `→ ${STATUS_RU[t.status]}: ${t.title}`, ev.agent, t.repo);
+    if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400), ev.agent, t.repo);
+  }
+  else if (ev.kind === 'scenario.recorded' && !ev.data.error) termLine('state', 'офис', '🎬 сценарий записан: ' + ev.data.name);
+}
+
+let RECONNECT_DELAY = 1500;
+const RECONNECT_MAX = 30000;
 function connect() {
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  let lastSeen = Date.now();
+  ws.onopen = () => {
+    RECONNECT_DELAY = 1500;
+    lastSeen = Date.now();
+    loadState();
+  };
+  const pingTimer = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastSeen > 65000) { ws.close(); return; }   // соединение "подвисло" (например, после сна ноутбука)
+    try { ws.send('ping'); } catch (e) {}
+  }, 30000);
   ws.onmessage = (m) => {
-    const ev = JSON.parse(m.data); const who = ev.agent ? agentTitle(ev.agent) : 'офис';
+    lastSeen = Date.now();
+    const data = JSON.parse(m.data);
+    if (data.kind === 'history') { data.events.forEach(renderHistoryEvent); return; }
+    const ev = data; const who = ev.agent ? agentTitle(ev.agent) : 'офис';
     if (OPEN_TASK && ev.task_id === OPEN_TASK) { const box = $('#t-log-merged'); if (box) { termAppend(box, ev); box.scrollTop = box.scrollHeight; } }
     if (ev.kind === 'agent.tool') termLine('tool', who, '⚙ ' + ev.data.summary, ev.agent, ev.data.task && ev.data.task.repo);
     else if (ev.kind === 'agent.text') { AGENT_LAST_TEXT[ev.agent] = ev.data.text; termLine('text', who, ev.data.text, ev.agent); renderPlanerkaRunning(); }
@@ -714,9 +748,14 @@ function connect() {
       if (isBikeFit(TESTS_REPO)) loadScenarios();
     }
   };
-  ws.onclose = () => setTimeout(connect, 1500);
+  ws.onclose = () => {
+    clearInterval(pingTimer);
+    setTimeout(connect, RECONNECT_DELAY);
+    RECONNECT_DELAY = Math.min(RECONNECT_DELAY * 2, RECONNECT_MAX);
+  };
 }
-loadState().then(() => { connect(); initView(); });
+connect();
+initView();
 
 
 // ---- тесты
