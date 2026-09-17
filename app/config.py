@@ -14,6 +14,9 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = Path(os.getenv("AO_WORKSPACE", ROOT / "workspace"))
+# Куда кладём репозитории, созданные кнопкой «Новый проект» (из офиса или из Telegram).
+# По умолчанию — папка, в которой лежит сам офис (обычно ~/PycharmProjects).
+PROJECTS_DIR = Path(os.getenv("AO_PROJECTS_DIR", ROOT.parent))
 AGENTS_DIR = WORKSPACE / "agents"
 LOGS_DIR = WORKSPACE / "logs"
 WORKTREES_DIR = WORKSPACE / "worktrees"

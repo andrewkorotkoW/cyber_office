@@ -8,6 +8,7 @@
   любой текст                — задача Майклу в текущий репозиторий
   @dwight текст / @pam текст — задача другому агенту
   /repo                      — выбрать текущий репозиторий (кнопки)
+  /newproject имя [описание] — создать новый проект и сделать его текущим
   /mission текст             — миссия: Майкл спланирует и раздаст
   /status                    — доска
   /diff <id>                 — diff задачи файлом
@@ -25,6 +26,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import config
+from app.core import repo_init
 from app.core.events import Event, bus
 from app.core.office import Office
 
@@ -37,10 +39,12 @@ _office: Office | None = None
 _bot: Bot | None = None
 _repos_fn = None
 _after_merge_cmd_fn = None
+_register_repo_fn = None
 _PREFS = config.WORKSPACE / "tg_prefs.json"
 _current_repo: dict[int, str] = {}          # tg_id -> выбранный репозиторий (хранится в tg_prefs.json)
 _pending_reason: dict[int, str] = {}       # tg_id -> task_id, ждём текст причины отклонения
 _pending_task: dict[int, tuple[str, str]] = {}   # tg_id -> (agent, text): задача ждёт выбора репозитория
+_pending_newrepo: set[int] = set()         # tg_id -> следующим текстом ждём "имя [описание]" нового проекта
 _portrait_sent: set[str] = set()           # id задач, для которых уже отправляли фото-портрет агента
 PORTRAITS_DIR = config.ROOT / "ui" / "assets" / "portraits"
 
@@ -78,8 +82,15 @@ def _repo_for(uid: int) -> str | None:
 
 def _repo_kb() -> InlineKeyboardMarkup:
     repos = _repos_fn()
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=_repo_name(r), callback_data=f"ao:repo:{i}")]
-                                                 for i, r in enumerate(repos)])
+    rows = [[InlineKeyboardButton(text="➕ Новый проект", callback_data="ao:newrepo")]]
+    rows += [[InlineKeyboardButton(text=_repo_name(r), callback_data=f"ao:repo:{i}")] for i, r in enumerate(repos)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _repo_switch_kb() -> InlineKeyboardMarkup:
+    """Кнопка под карточкой созданной задачи/миссии — показывает, куда она ушла,
+    и даёт быстро сменить репозиторий по умолчанию для следующих задач."""
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔁 сменить репозиторий", callback_data="ao:reposwitch")]])
 
 
 def _agent_title(name: str) -> str:
@@ -134,6 +145,7 @@ async def start(message: Message) -> None:
         "• любой текст — задача Майклу в текущий репозиторий\n"
         "• <code>@dwight текст</code> / <code>@pam текст</code> — другому агенту\n"
         "• /repo — выбрать репозиторий\n"
+        "• /newproject имя [описание] — создать новый проект\n"
         "• /mission текст — миссия: Майкл спланирует и раздаст команде\n"
         "• /status — доска\n\n"
         f"Текущий репозиторий: <b>{ESC(_repo_name(_repo_for(uid) or '')) or 'не выбран — /repo'}</b>",
@@ -161,6 +173,54 @@ async def repo_pick(callback: CallbackQuery) -> None:
         if pending:                                   # задача ждала выбора — создаём
             await _create(callback.message, uid, *pending)
     await callback.answer()
+
+
+@router.callback_query(F.data == "ao:newrepo")
+async def newrepo_button(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer(); return
+    _pending_newrepo.add(callback.from_user.id)
+    await callback.message.answer(
+        "Имя нового проекта (латиница/цифры/_-), можно одной строкой с описанием:\n"
+        "<code>my_bot Бот для заказов в Telegram</code>", parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ao:reposwitch")
+async def reposwitch_button(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer(); return
+    await callback.message.answer("Репозиторий по умолчанию для следующих задач:", reply_markup=_repo_kb())
+    await callback.answer()
+
+
+@router.message(Command("newproject"))
+async def newproject(message: Message) -> None:
+    uid = message.from_user.id
+    if not _is_admin(uid):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer("Использование: /newproject имя_проекта [описание]\nШаблон — python, .venv ставится в фоне.")
+        return
+    name = parts[1]
+    description = parts[2] if len(parts) > 2 else ""
+    await _create_repo(message, uid, name, description)
+
+
+async def _create_repo(target: Message, uid: int, name: str, description: str) -> None:
+    try:
+        path = await repo_init.create(config.PROJECTS_DIR, name, description, "python")
+    except ValueError as exc:
+        await target.answer(f"Не вышло: {ESC(exc)}", parse_mode="HTML"); return
+    _register_repo_fn(path)
+    _current_repo[uid] = path; _save_prefs()
+    asyncio.create_task(repo_init.setup_venv(path))
+    await target.answer(f"📁 Создан проект <b>{ESC(_repo_name(path))}</b> — теперь это твой текущий репозиторий.\n"
+                        f"Окружение (.venv) ставится в фоне.", parse_mode="HTML")
+    pending = _pending_task.pop(uid, None)
+    if pending:                                   # задача ждала выбора репозитория — создаём в новом
+        await _create(target, uid, *pending)
 
 
 @router.message(Command("status"))
@@ -202,7 +262,8 @@ async def mission(message: Message) -> None:
         m = await _office.create_mission(goal, repo)
     except ValueError as exc:
         await message.answer(f"Не вышло: {ESC(exc)}", parse_mode="HTML"); return
-    await message.answer(f"🎯 Миссия принята, Майкл планирует.\n<code>{m.id}</code>", parse_mode="HTML")
+    await message.answer(f"🎯 Миссия принята → <b>{ESC(_repo_name(repo))}</b>, Майкл планирует.\n<code>{m.id}</code>",
+                         parse_mode="HTML", reply_markup=_repo_switch_kb())
 
 
 @router.message(Command("diff"))
@@ -234,6 +295,12 @@ async def new_task(message: Message) -> None:
         ok = await _office.reject(task_id, text)
         await message.answer("Отклонено, причина сохранена." if ok else "Задачу уже нельзя отклонить.")
         return
+    if uid in _pending_newrepo:                       # это "имя [описание]" нового проекта
+        _pending_newrepo.discard(uid)
+        parts = text.split(maxsplit=1)
+        name, description = parts[0], (parts[1] if len(parts) > 1 else "")
+        await _create_repo(message, uid, name, description)
+        return
     agent = "michael"
     m = re.match(r"@(\w+)\s+(.+)", text, re.S)
     if m and _office.roster.get(m.group(1).lower()):
@@ -252,7 +319,7 @@ async def _create(target: Message, uid: int, agent: str, text: str) -> None:
     except ValueError as exc:
         await target.answer(f"Не вышло: {ESC(exc)}", parse_mode="HTML"); return
     await target.answer(f"✉️ Принято → {_agent_title(agent)} · <b>{ESC(_repo_name(t.repo))}</b>\n<code>{t.id}</code>",
-                        parse_mode="HTML")
+                        parse_mode="HTML", reply_markup=_repo_switch_kb())
 
 
 # ------------------------------------------------------------------ кнопки ревью
@@ -362,10 +429,10 @@ async def _on_event(ev: Event) -> None:
             await _notify_admins(text)
 
 
-async def run(office: Office, repos_fn, after_merge_cmd_fn) -> None:
+async def run(office: Office, repos_fn, after_merge_cmd_fn, register_repo_fn) -> None:
     """Запускается как фоновая задача сервера, если задан AO_TG_TOKEN."""
-    global _office, _bot, _repos_fn, _after_merge_cmd_fn
-    _office, _repos_fn, _after_merge_cmd_fn = office, repos_fn, after_merge_cmd_fn
+    global _office, _bot, _repos_fn, _after_merge_cmd_fn, _register_repo_fn
+    _office, _repos_fn, _after_merge_cmd_fn, _register_repo_fn = office, repos_fn, after_merge_cmd_fn, register_repo_fn
     _load_prefs()
     _bot = Bot(token=config.TG_TOKEN)
     dp = Dispatcher()

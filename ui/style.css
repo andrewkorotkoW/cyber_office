@@ -166,6 +166,17 @@ input, textarea, select { width:100%; background:var(--bg); color:var(--text); b
 input:focus, textarea:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:3px 3px 0 var(--accent) }
 textarea { min-height:120px; resize:vertical }
 .row { display:flex; gap:10px } .row > * { flex:1 }
+
+/* диалог «Репозиторий» (подключить существующий / создать новый) и блок «Новый проект…»
+   раскрывающийся в dlg-new/dlg-mission при выборе того же пункта в селекте репозитория */
+.repo-tabs { display:flex; gap:6px; margin-bottom:10px }
+.repo-tabs .repo-tab { padding:6px 10px; font-size:12px; box-shadow:2px 2px 0 var(--line) }
+.repo-tabs .repo-tab.on { background:var(--accent); border-color:var(--accent); color:var(--bg) }
+.repo-new-fields { margin-top:8px; padding:10px; border:2px dashed var(--line); background:var(--bg) }
+.checkbox-row { display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:normal }
+.checkbox-row input { width:auto }
+.mix-warn { margin-top:8px; padding:6px 10px; border:2px solid var(--warn); color:var(--warn); font-size:12px }
+.mix-warn[hidden] { display:none }
 pre.diff { font:12px/1.45 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:10px; overflow:auto; max-height:52vh; white-space:pre-wrap; word-break:break-all }
 pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff .hunk { color:var(--blue) } pre.diff .file { color:var(--warn); font-weight:600 }
 
