@@ -72,7 +72,7 @@ def parse_plan(text: str, known_agents: set[str], default_agent: str = "michael"
     m = re.search(r"\{.*\}", text, re.S)
     if not m:
         raise ValueError("в ответе планировщика нет JSON")
-    data = json.loads(m.group(0))
+    data = json.loads(m.group(0), strict=False)
     raw = data.get("tasks") or []
     if not 1 <= len(raw) <= 8:
         raise ValueError(f"план должен содержать 1–8 подзадач, получено {len(raw)}")
@@ -137,7 +137,7 @@ class ClaudePlanner:
         finally:
             procs.untrack(proc.pid)
         try:
-            msg = json.loads(out.decode("utf-8", errors="replace"))
+            msg = json.loads(out.decode("utf-8", errors="replace"), strict=False)
         except json.JSONDecodeError:
             raise RuntimeError(f"планировщик не ответил JSON: {err.decode(errors='replace')[-300:]}")
         if msg.get("is_error"):
