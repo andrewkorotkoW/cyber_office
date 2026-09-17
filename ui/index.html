@@ -123,8 +123,14 @@
       <div><label>Агент</label><div class="agent-pick"><div id="f-agent-avatar" class="pick-avatar" role="img" hidden></div><select id="f-agent"></select></div></div>
       <div><label>Репозиторий</label><select id="f-repo"></select></div>
     </div>
+    <div id="f-repo-new" class="repo-new-fields" hidden>
+      <label>Имя проекта</label><input id="f-repo-new-name" placeholder="my_project">
+      <label>Шаблон</label><select id="f-repo-new-template"><option value="python">python</option><option value="web">web</option><option value="empty">пусто</option></select>
+      <label class="checkbox-row"><input type="checkbox" id="f-repo-new-venv" checked> сделать .venv</label>
+    </div>
     <label>Название</label><input id="f-title" placeholder="Коротко: что сделать">
     <label>Описание для агента</label><textarea id="f-prompt" placeholder="Что именно, где, критерии готовности. Чем конкретнее — тем лучше результат."></textarea>
+    <div id="f-mix-warn" class="mix-warn" hidden></div>
     <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('dlg-new').close()">Отмена</button>
       <button class="primary" id="f-submit">Отправить агенту</button>
@@ -137,10 +143,43 @@
   <div class="content">
     <p style="color:var(--mute);margin:0 0 6px">Одна большая цель. Майкл изучит репозиторий, разобьёт на подзадачи и раздаст команде. Каждая подзадача — отдельное ревью.</p>
     <label>Репозиторий</label><select id="m-repo"></select>
+    <div id="m-repo-new" class="repo-new-fields" hidden>
+      <label>Имя проекта</label><input id="m-repo-new-name" placeholder="my_project">
+      <label>Шаблон</label><select id="m-repo-new-template"><option value="python">python</option><option value="web">web</option><option value="empty">пусто</option></select>
+      <label class="checkbox-row"><input type="checkbox" id="m-repo-new-venv" checked> сделать .venv</label>
+    </div>
     <label>Цель</label><textarea id="m-goal" placeholder="Например: добавить в calc степень и процент, покрыть тестами, обновить README"></textarea>
+    <div id="m-mix-warn" class="mix-warn" hidden></div>
     <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('dlg-mission').close()">Отмена</button>
       <button class="primary" id="m-submit">Запустить планирование</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-repo">
+  <div class="head"><h3>Репозиторий</h3><button class="small" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="content">
+    <div class="repo-tabs" id="repo-tabs">
+      <button class="repo-tab on" data-tab="existing">Подключить существующий</button>
+      <button class="repo-tab" data-tab="new">Создать новый</button>
+    </div>
+    <div id="repo-tab-existing">
+      <label>Путь к git-репозиторию</label>
+      <input id="repo-path" placeholder="~/projects/my-repo">
+    </div>
+    <div id="repo-tab-new" hidden>
+      <label>Имя проекта</label>
+      <input id="repo-new-name" placeholder="my_project">
+      <label>Описание</label>
+      <textarea id="repo-new-desc" placeholder="Кратко — что за проект"></textarea>
+      <label>Шаблон</label>
+      <select id="repo-new-template"><option value="python">python</option><option value="web">web</option><option value="empty">пусто</option></select>
+      <label class="checkbox-row"><input type="checkbox" id="repo-new-venv" checked> сделать .venv</label>
+    </div>
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('dlg-repo').close()">Отмена</button>
+      <button class="primary" id="repo-submit">Добавить</button>
     </div>
   </div>
 </dialog>

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import allure, lock, procs, scenarios, testlab, worktree
+from app.core import allure, lock, procs, repo_init, scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office, build_summary
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     office.resume_pending_auto_retries()
     if config.TG_TOKEN and config.TG_ADMINS:
         from app import telegram
-        asyncio.create_task(telegram.run(office, _repos, _after_merge_cmd))
+        asyncio.create_task(telegram.run(office, _repos, _after_merge_cmd, _register_repo))
     elif config.TG_TOKEN:
         log.warning("AO_TG_TOKEN задан, но AO_TG_ADMINS пуст — мост выключен: некому доверять")
     try:
@@ -135,6 +135,13 @@ async def _run_after_merge(repo: str, task_id: str) -> None:
     await office.run_after_merge(repo, task_id, _after_merge_cmd(repo))
 
 
+def _register_repo(path: str) -> None:
+    entries = _repo_entries()
+    if path not in [e["path"] for e in entries]:
+        entries.append({"path": path})
+        REPOS_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 class RepoIn(BaseModel):
     path: str
 
@@ -149,11 +156,31 @@ async def add_repo(body: RepoIn) -> list[str]:
     p = str(Path(body.path).expanduser().resolve())
     if not await worktree.is_repo(p):
         raise HTTPException(400, f"{p} — не git-репозиторий")
-    entries = _repo_entries()
-    if p not in [e["path"] for e in entries]:
-        entries.append({"path": p})
-    REPOS_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    _register_repo(p)
     return _repos()
+
+
+class RepoNewIn(BaseModel):
+    name: str
+    description: str = ""
+    template: str = "empty"
+    venv: bool = True
+
+
+@app.post("/api/repos/new")
+async def new_repo(body: RepoNewIn) -> dict:
+    """Создаёт новый проект в AO_PROJECTS_DIR и сразу регистрирует его как репозиторий
+    офиса — чтобы под новую идею не пришлось руками искать/подключать папку. Для шаблона
+    "python" .venv ставится в фоне (см. repo_init.setup_venv), если не снят чекбокс venv."""
+    try:
+        path = await repo_init.create(config.PROJECTS_DIR, body.name, body.description, body.template)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _register_repo(path)
+    await bus.emit("repo.created", None, None, path=path, name=body.name)
+    if body.template == "python" and body.venv:
+        asyncio.create_task(repo_init.setup_venv(path))
+    return {"path": path, "repos": _repos()}
 
 
 # ------------------------------------------------------------------ состояние и задачи

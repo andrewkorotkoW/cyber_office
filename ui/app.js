@@ -561,11 +561,61 @@ async function openTask(id) {
 let OPEN_TASK = null;
 $('#dlg-task').addEventListener('close', () => { OPEN_TASK = null; });
 
+// value спецпункта «➕ Новый проект…» в селектах репозитория (dlg-new/dlg-mission/чистая
+// логика ниже) — чистая функция и regex-константа, тестируемые смоук-тестом на node
+// (см. tests/test_new_repo_ui.py), без DOM.
+function isNewRepoOption(value) { return value === '__new__'; }
+const MIX_WORDS_RE = /новый проект|сайт|приложени|бот/i;
+// «Это точно в <repo>? Может, новый проект?» — не блокирует отправку, просто подсказка,
+// когда текст похож на отдельную идею, а выбранный репозиторий — не sandbox и не «Новый проект».
+function mixingWarning(text, repoPath) {
+  if (!repoPath || isNewRepoOption(repoPath)) return null;
+  const base = repoPath.replace(/\\/g, '/').split('/').pop();
+  if (base === 'sandbox') return null;
+  if (!MIX_WORDS_RE.test(text || '')) return null;
+  return `Это точно в ${base}? Может, новый проект?`;
+}
+
 function fillForm() {
   $('#f-agent').innerHTML = STATE.agents.map(a => `<option value="${a.name}">${esc(a.title)}</option>`).join('');
   const opts = STATE.repos.map(r => `<option value="${esc(r)}">${esc(r.replace(/^\/Users\/[^/]+/, '~'))}</option>`).join('');
-  $('#f-repo').innerHTML = opts; $('#m-repo').innerHTML = opts;
+  const newOpt = `<option value="__new__">➕ Новый проект…</option>`;
+  $('#f-repo').innerHTML = newOpt + opts; $('#m-repo').innerHTML = newOpt + opts;
   if (REPO_FILTER) { $('#f-repo').value = REPO_FILTER; $('#m-repo').value = REPO_FILTER; }
+  toggleRepoNewFields('f'); toggleRepoNewFields('m');
+  updateMixWarning('f'); updateMixWarning('m');
+}
+
+function toggleRepoNewFields(prefix) {
+  const sel = document.getElementById(prefix + '-repo'), box = document.getElementById(prefix + '-repo-new');
+  if (sel && box) box.hidden = !isNewRepoOption(sel.value);
+}
+function updateMixWarning(prefix) {
+  const sel = document.getElementById(prefix + '-repo'), warn = document.getElementById(prefix + '-mix-warn');
+  if (!sel || !warn) return;
+  const textEl = prefix === 'm' ? document.getElementById('m-goal') : document.getElementById('f-prompt');
+  const titleEl = prefix === 'f' ? document.getElementById('f-title') : null;
+  const text = (titleEl ? titleEl.value + ' ' : '') + (textEl ? textEl.value : '');
+  const msg = mixingWarning(text, sel.value);
+  warn.hidden = !msg; warn.textContent = msg || '';
+}
+document.getElementById('f-repo')?.addEventListener('change', () => { toggleRepoNewFields('f'); updateMixWarning('f'); });
+document.getElementById('m-repo')?.addEventListener('change', () => { toggleRepoNewFields('m'); updateMixWarning('m'); });
+document.getElementById('f-title')?.addEventListener('input', () => updateMixWarning('f'));
+document.getElementById('f-prompt')?.addEventListener('input', () => updateMixWarning('f'));
+document.getElementById('m-goal')?.addEventListener('input', () => updateMixWarning('m'));
+
+// репозиторий из селекта f-repo/m-repo — если выбран «Новый проект», сперва создаёт его
+// (POST /api/repos/new) и возвращает свежий path; иначе просто value селекта как есть.
+async function resolveRepo(prefix, description) {
+  const sel = document.getElementById(prefix + '-repo');
+  if (!isNewRepoOption(sel.value)) return sel.value;
+  const name = document.getElementById(prefix + '-repo-new-name').value.trim();
+  if (!name) throw new Error('укажи имя нового проекта');
+  const template = document.getElementById(prefix + '-repo-new-template').value;
+  const venv = document.getElementById(prefix + '-repo-new-venv').checked;
+  const r = await api('/api/repos/new', 'POST', { name, description, template, venv });
+  return r.path;
 }
 
 function mountHeadPortrait(key, elId, file) {
@@ -593,7 +643,8 @@ $('#btn-onboarding-task')?.addEventListener('click', () => {
 });
 $('#f-submit').addEventListener('click', async () => {
   try {
-    await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo: $('#f-repo').value, agent: $('#f-agent').value });
+    const repo = await resolveRepo('f', $('#f-prompt').value);
+    await api('/api/tasks', 'POST', { title: $('#f-title').value, prompt: $('#f-prompt').value, repo, agent: $('#f-agent').value });
     $('#f-title').value = ''; $('#f-prompt').value = '';
     PORTRAITS.dwight?.mood('happy', 1600);
     await typeSpeech('dwight', document.getElementById('new-speech'), 'Принял, отдаю в работу.', 10);
@@ -611,7 +662,8 @@ $('#btn-mission').addEventListener('click', () => {
 });
 $('#m-submit').addEventListener('click', async () => {
   try {
-    await api('/api/missions', 'POST', { goal: $('#m-goal').value, repo: $('#m-repo').value });
+    const repo = await resolveRepo('m', $('#m-goal').value);
+    await api('/api/missions', 'POST', { goal: $('#m-goal').value, repo });
     $('#m-goal').value = '';
     PORTRAITS.michael?.mood('happy', 1600);
     await typeSpeech('michael', document.getElementById('mission-speech'), 'Понял. Иду планировать.', 10);
@@ -622,12 +674,39 @@ $('#m-submit').addEventListener('click', async () => {
     await typeSpeech('michael', document.getElementById('mission-speech'), e.message, 10, { error: true });
   }
 });
-async function addRepoPrompt() {
-  const path = await uiPrompt('Путь к git-репозиторию', '~/projects/my-repo'); if (!path) return;
-  try { await api('/api/repos', 'POST', { path }); await loadState(); } catch (e) { alert(e.message); }
+
+// диалог «Репозиторий»: вкладка «Подключить существующий» (путь к готовому git-репо) или
+// «Создать новый» (те же поля, что и в dlg-new/dlg-mission, см. resolveRepo выше).
+function repoSwitchTab(tab) {
+  document.querySelectorAll('#repo-tabs .repo-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  $('#repo-tab-existing').hidden = tab !== 'existing';
+  $('#repo-tab-new').hidden = tab !== 'new';
+  $('#repo-submit').textContent = tab === 'new' ? 'Создать' : 'Добавить';
 }
-$('#btn-repo').addEventListener('click', addRepoPrompt);
-$('#btn-projects-add').addEventListener('click', addRepoPrompt);
+document.querySelectorAll('#repo-tabs .repo-tab').forEach(b => b.addEventListener('click', () => repoSwitchTab(b.dataset.tab)));
+
+function openRepoDialog() {
+  repoSwitchTab('existing');
+  $('#repo-path').value = ''; $('#repo-new-name').value = ''; $('#repo-new-desc').value = '';
+  $('#repo-new-template').value = 'python'; $('#repo-new-venv').checked = true;
+  $('#dlg-repo').showModal();
+}
+$('#btn-repo').addEventListener('click', openRepoDialog);
+$('#btn-projects-add').addEventListener('click', openRepoDialog);
+$('#repo-submit').addEventListener('click', async () => {
+  const tab = document.querySelector('#repo-tabs .repo-tab.on')?.dataset.tab || 'existing';
+  try {
+    if (tab === 'existing') {
+      const path = $('#repo-path').value.trim(); if (!path) return;
+      await api('/api/repos', 'POST', { path });
+    } else {
+      const name = $('#repo-new-name').value.trim(); if (!name) return;
+      await api('/api/repos/new', 'POST', { name, description: $('#repo-new-desc').value,
+                                             template: $('#repo-new-template').value, venv: $('#repo-new-venv').checked });
+    }
+    $('#dlg-repo').close(); await loadState();
+  } catch (e) { alert(e.message); }
+});
 
 // ---- центр уведомлений (колокольчик) — независим от ленты, копит события в localStorage
 function saveNotifications() {
@@ -734,6 +813,14 @@ function connect() {
     }
     else if (ev.kind === 'repo.after_merge') {
       pushNotification(`🔄 обновлён репозиторий: ${ev.data.repo ? ev.data.repo.split('/').pop() : ''}`);
+    }
+    else if (ev.kind === 'repo.created') {
+      termLine('state', 'офис', '📁 создан проект: ' + (ev.data.name || (ev.data.path || '').split('/').pop()), null, ev.data.path);
+      loadState();
+    }
+    else if (ev.kind === 'repo.ready') {
+      pushNotification(ev.data.ok ? `✅ окружение готово: ${(ev.data.path || '').split('/').pop()}`
+                                   : `⚠️ .venv не удалось поставить: ${(ev.data.path || '').split('/').pop()}`);
     }
     else if (ev.kind.startsWith('run.')) {
       if (ev.task_id === CURRENT_RUN) {
