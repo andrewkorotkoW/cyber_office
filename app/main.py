@@ -303,6 +303,9 @@ async def delete_mission(mission_id: str) -> dict:
     for t in office.store.mission_tasks(mission_id):
         if t.status == "running":
             raise HTTPException(400, "в миссии есть работающая задача")
+    planning = office._planning.get(mission_id)
+    if planning is not None:                       # планирование ещё идёт — отменяем, чтобы не создало задачи
+        planning.cancel()
     for t in office.store.mission_tasks(mission_id):
         await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
         office.store.delete(t.id)

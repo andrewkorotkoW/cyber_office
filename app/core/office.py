@@ -132,7 +132,7 @@ class Office:
             # self._planning ключуется id миссии, а не именем агента — надёжный признак
             # того, что параллельно идёт _plan() этого же агента, это a.state == 'planning'
             # (его выставляет только _plan, см. симметричный prev_state = lead.state там же)
-            if a.state == "planning":
+            if a.state == "planning" and self._planning:
                 a.current_task = None
             else:
                 a.state, a.current_task = "idle", None
@@ -374,6 +374,8 @@ class Office:
         try:
             team = {a.name: a.title for a in self.roster.agents.values()}
             plan = await self.planner.plan(m.goal, m.repo, team)
+            if m.id not in self.store.missions:      # миссию удалили, пока шло планирование
+                return
             m.summary, m.cost_usd = plan.summary, plan.cost_usd
             key_to_id: dict[str, str] = {}
             for pt in plan.tasks:            # план уже проверен на циклы; создаём в порядке плана
@@ -393,8 +395,15 @@ class Office:
             m.status, m.error = "failed", str(exc)
         finally:
             self.store.save()
-            lead.state = prev_state if lead.name in self._running else "idle"
             self._planning.pop(m.id, None)
+            # prev_state мог быть "planning" от параллельного планирования, которое уже
+            # завершилось — восстанавливаем состояние по фактам, а не по снимку
+            if self._planning:
+                lead.state = "planning"
+            elif lead.name in self._running:
+                lead.state = "working"
+            else:
+                lead.state = "idle"
             await bus.emit("agent.state", lead.name, None, state=lead.state)
             await bus.emit("mission.updated", lead.name, None, mission=asdict(m))
             self.kick_all()
