@@ -20,3 +20,4 @@ workspace/repos.json
 # песочница — отдельный git-репозиторий
 sandbox/
 assets/icon.iconset/
+workspace/launchd.*.log
