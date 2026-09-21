@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import os
 import signal
 from dataclasses import asdict
@@ -35,6 +36,28 @@ PROMPT_TEMPLATE = """Задача: {title}
 """
 
 PREV_HINT_MARKER = "Предыдущая попытка сохранена в ветке `"
+
+# Агент иногда запускает прогон в фоне и завершает сессию фразой «подожду результата» —
+# уведомление о фоновой задаче к нему уже не придёт, и задача уходит на ревью без итога.
+UNFINISHED_RE = re.compile(
+    r"(wait(ing)?\s+for\s+(th(e|is)\s+)?(background|full|final|test)|i'll\s+pause|i will\s+pause|"
+    r"stop checking now|подожд[ую]\s+(результат|заверш)|дождусь\s+(результат|заверш))",
+    re.IGNORECASE)
+
+CONTINUE_PROMPT = """Задача: {title}
+
+Твоя прошлая сессия по этой задаче закончилась словами «{tail}» — ты запустил прогон в фоне
+и завершил работу, не дождавшись; уведомление о фоновой задаче уже не придёт. Код в каталоге
+{cwd} сохранён (ветка та же). Продолжи с этого места: запусти проверку/прогон ЗАНОВО строго
+в foreground, дождись результата, при необходимости поправь код, сделай `git add -A && git commit`
+и ответь резюме с фактическим итогом (что прогнал, сколько прошло/упало/xfail и почему, что осталось).
+"""
+
+
+def looks_unfinished(text: str | None) -> bool:
+    """Резюме агента похоже на «ушёл ждать фоновую задачу», а не на итог работы."""
+    tail = (text or "").strip()[-400:]
+    return bool(tail) and len(tail) < 400 and UNFINISHED_RE.search(tail) is not None
 
 
 def _strip_prev_hint(prompt: str) -> str:
@@ -100,6 +123,14 @@ class Office:
             system = a.system + "\n\nТвоя память (заметки с прошлых задач):\n" + memory.read(a.name)
             res = await self.runner.run(a.name, system, a.model, PROMPT_TEMPLATE.format(
                 title=task.title, prompt=task.prompt, cwd=path), path, task.id)
+            if res.ok and looks_unfinished(res.text):
+                task.note("агент ушёл ждать фоновый прогон — продолжаю сессию")
+                await bus.emit("task.updated", a.name, task.id, task=_pub(task))
+                tail = " ".join((res.text or "").split())[-160:]
+                res2 = await self.runner.run(a.name, system, a.model, CONTINUE_PROMPT.format(
+                    title=task.title, tail=tail, cwd=path), path, task.id)
+                res2.cost_usd += res.cost_usd; res2.turns += res.turns
+                res = res2
             await worktree.commit_all(path, f"{a.name}: {task.title}")   # если агент забыл закоммитить
             task.result, task.cost_usd, task.turns = res.text, res.cost_usd, res.turns
             task.diff_stat = await worktree.diff_stat(task.repo, branch, self.base_for(task.repo))
