@@ -58,6 +58,7 @@ class Runner(Protocol):
 INFRA_MARKERS = (
     "api error", "failed to authenticate", "rate limit", "overloaded",
     "529", "503", "econnreset",
+    "session limit", "usage limit", "hit your", "can't reach the api server",   # лимит подписки / сеть — повторить позже
 )
 
 
