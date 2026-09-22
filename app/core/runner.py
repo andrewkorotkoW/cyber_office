@@ -108,7 +108,12 @@ class ClaudeRunner:
             "--allowedTools", ALLOWED_TOOLS,
             "--append-system-prompt", system,
         ]
-        env = {**os.environ, "PATH": f"{Path(self.binary).parent}:{os.environ.get('PATH', '')}"}
+        env = {**os.environ, "PATH": f"{Path(self.binary).parent}:{os.environ.get('PATH', '')}",
+               # Bash-инструмент claude по умолчанию уводит команду длиннее ~3 мин в фон, а в режиме -p
+               # уведомление о её завершении к агенту не приходит — прогон тестов «зависает» и агент сдаёт
+               # задачу без результата. Поднимаем потолок до 30 мин, чтобы прогоны шли в foreground.
+               "BASH_DEFAULT_TIMEOUT_MS": os.environ.get("BASH_DEFAULT_TIMEOUT_MS", "1800000"),
+               "BASH_MAX_TIMEOUT_MS": os.environ.get("BASH_MAX_TIMEOUT_MS", "1800000")}
         try:
             # limit: одна строка stream-json может нести содержимое большого файла (Read на 100 КБ+);
             # дефолтные 64 КБ StreamReader рвут поток ошибкой «chunk exceed the limit»

@@ -42,7 +42,8 @@ PREV_HINT_MARKER = "Предыдущая попытка сохранена в в
 UNFINISHED_RE = re.compile(
     r"(wait(ing)?\s+for\s+(th(e|is)\s+)?(background|full|final|test)|i'll\s+pause|i will\s+pause|"
     r"stop checking now|подожд[ую]\s+(результат|заверш)|дождусь\s+(результат|заверш)|"
-    r"ожида[юе][мт]?\s+(уведомлен|результат|заверш)|жду\s+(уведомлен|результат|заверш)|фонов\w*\s+прогон)",
+    r"ожида[юе][мт]?\s+(уведомлен|результат|заверш)|жду\s+(уведомлен|результат|заверш)|фонов\w*\s+прогон|"
+    r"wait for its|completion notification|moved to background|auto-moved|in the background|ушл[оа] в фон)",
     re.IGNORECASE)
 
 CONTINUE_PROMPT = """Задача: {title}

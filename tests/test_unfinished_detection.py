@@ -7,6 +7,7 @@ def test_detects_waiting_for_background_run():
     assert looks_unfinished("I'll stop checking now and wait for the background task notification to arrive.")
     assert looks_unfinished("Ожидаю уведомления о завершении фонового прогона теста статьи, дальше продолжу по его результату.")
     assert looks_unfinished("Жду результата прогона.")
+    assert looks_unfinished("The pytest run auto-moved to background after exceeding 180s. I'll wait for its completion notification rather than poll.")
 
 
 def test_real_summary_is_not_unfinished():
