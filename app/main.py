@@ -151,6 +151,22 @@ async def repos() -> list[str]:
     return _repos()
 
 
+@app.get("/api/repos/paused")
+async def paused_repos() -> list[str]:
+    return sorted(office.paused_repos)
+
+
+@app.post("/api/repos/pause")
+async def pause_repo(body: RepoIn) -> list[str]:
+    """Поставить репозиторий на паузу: его todo-задачи не стартуют, пока паузу не снимут."""
+    return sorted(office.set_repo_paused(str(Path(body.path).expanduser().resolve()), True))
+
+
+@app.post("/api/repos/resume")
+async def resume_repo(body: RepoIn) -> list[str]:
+    return sorted(office.set_repo_paused(str(Path(body.path).expanduser().resolve()), False))
+
+
 @app.post("/api/repos")
 async def add_repo(body: RepoIn) -> list[str]:
     p = str(Path(body.path).expanduser().resolve())

@@ -119,12 +119,44 @@ class Office:
         self.kick(agent)
         return task
 
+    # ------------------------------------------------------------ пауза репозиториев
+    @property
+    def paused_repos(self) -> set[str]:
+        """Репозитории на паузе: их todo-задачи не берутся в работу (running не трогаем).
+        Хранится в workspace/paused_repos.json, чтобы пережить перезапуск."""
+        if not hasattr(self, "_paused_repos"):
+            self._paused_repos = set(self._load_paused())
+        return self._paused_repos
+
+    def _paused_file(self):
+        from app import config
+        return config.WORKSPACE / "paused_repos.json"
+
+    def _load_paused(self) -> list[str]:
+        import json
+        try:
+            return list(json.loads(self._paused_file().read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return []
+
+    def set_repo_paused(self, repo: str, paused: bool) -> set[str]:
+        import json
+        if paused:
+            self.paused_repos.add(repo)
+        else:
+            self.paused_repos.discard(repo)
+        self._paused_file().write_text(json.dumps(sorted(self.paused_repos), ensure_ascii=False), encoding="utf-8")
+        if not paused:
+            self.kick_all()
+        return set(self.paused_repos)
+
     def kick(self, agent: str) -> None:
-        """Если агент свободен и у него есть todo — запускаем следующую."""
+        """Если агент свободен и у него есть todo — запускаем следующую (репозитории на паузе пропускаем)."""
         a = self.roster.get(agent)
         if a is None or a.state != "idle" or agent in self._running:
             return
-        todo = [t for t in self.store.by_status("todo") if t.agent == agent and self.store.deps_done(t)]
+        todo = [t for t in self.store.by_status("todo")
+                if t.agent == agent and self.store.deps_done(t) and t.repo not in self.paused_repos]
         if todo:
             self._running[agent] = asyncio.create_task(self._run(todo[0]))
 
