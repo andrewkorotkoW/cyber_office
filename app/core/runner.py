@@ -31,6 +31,9 @@ ALLOWED_TOOLS = ",".join([
     "Bash(ls*)", "Bash(cat*)", "Bash(python*)", "Bash(python3*)", "Bash(pytest*)",
     "Bash(./.venv/bin/*)", "Bash(.venv/bin/*)", "Bash(*/.venv/bin/*)",
     "Bash(.venv/Scripts/*)", "Bash(./.venv/Scripts/*)", "Bash(*/.venv/Scripts/*)",   # тот же .venv на Windows
+    # запуск с префиксом переменной окружения (HEADLESS=1 .venv/bin/python …, ENV=stage …) —
+    # без этого агент получает «This command requires approval» и сдаёт задачу пустой
+    "Bash(HEADLESS=*)", "Bash(ENV=*)", "Bash(PWDEBUG=*)", "Bash(env *)",
     "Bash(npm test*)", "Bash(npm run*)", "Bash(node*)", "Bash(make*)",
 ])
 
