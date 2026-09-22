@@ -56,6 +56,27 @@ CONTINUE_PROMPT = """Задача: {title}
 """
 
 
+RESET_RE = re.compile(r"resets\s+(\d{1,2}):(\d{2})\s*(am|pm)?", re.IGNORECASE)
+
+
+def reset_delay_seconds(reason: str | None, now: datetime | None = None) -> float | None:
+    """Сколько секунд ждать до сброса лимита из текста «You've hit your session limit · resets 7:10pm»
+    (+2 минуты запаса). None, если времени сброса в тексте нет."""
+    m = RESET_RE.search(reason or "")
+    if not m:
+        return None
+    hour, minute, ampm = int(m.group(1)), int(m.group(2)), (m.group(3) or "").lower()
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    now = now or datetime.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds() + 120
+
+
 def looks_unfinished(text: str | None) -> bool:
     """Резюме агента похоже на «ушёл ждать фоновую задачу», а не на итог работы."""
     tail = (text or "").strip()[-400:]
@@ -205,6 +226,11 @@ class Office:
                            exhausted=True, attempt=task.auto_retries, max_retries=self.max_auto_retries)
             return
         delay = self.auto_retry_delays[min(task.auto_retries, len(self.auto_retry_delays) - 1)]
+        # лимит подписки Claude пишет время сброса («resets 7:10pm») — ждать до него, а не
+        # жечь три попытки по 2/5/15 минут впустую
+        until_reset = reset_delay_seconds(reason)
+        if until_reset is not None:
+            delay = max(delay, until_reset)
         is_first = task.auto_retries == 0
         task.auto_retries += 1
         task.auto_retry_at = (datetime.now() + timedelta(seconds=delay)).isoformat(timespec="seconds")
