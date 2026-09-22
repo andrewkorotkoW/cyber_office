@@ -233,10 +233,11 @@ class Reason(BaseModel):
 
 
 @app.post("/api/tasks/{task_id}/approve")
-async def approve(task_id: str) -> dict:
-    ok, out = await office.approve(task_id)
+async def approve(task_id: str, force: bool = False) -> dict:
+    """force=true — принять задачу даже с пустым диффом (по умолчанию такая отклоняется с 409)."""
+    ok, out = await office.approve(task_id, force=force)
     if not ok:
-        raise HTTPException(400, out or "не удалось")
+        raise HTTPException(409 if out == office.EMPTY_DIFF_MSG else 400, out or "не удалось")
     t = office.store.get(task_id)
     if t:
         asyncio.create_task(_run_after_merge(t.repo, task_id))

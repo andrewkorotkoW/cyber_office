@@ -329,9 +329,19 @@ async def actions(callback: CallbackQuery) -> None:
     if not _is_admin(uid):
         await callback.answer(); return
     _, action, task_id = callback.data.split(":", 2)
-    if action == "approve":
-        ok, out = await _office.approve(task_id)
-        await callback.answer("Влито в main" if ok else "Не удалось", show_alert=not ok)
+    if action in ("approve", "approve_force"):
+        ok, out = await _office.approve(task_id, force=(action == "approve_force"))
+        if not ok and out == _office.EMPTY_DIFF_MSG:
+            await callback.answer()
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⚠️ Всё равно принять", callback_data=f"ao:approve_force:{task_id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"ao:reject:{task_id}")]])
+            await callback.message.answer(
+                "⚠️ В задаче нет изменений — агент ничего не сделал (часто это отказ в запуске команды, "
+                "см. резюме). Принимать такую задачу нет смысла: отклони с причиной или прими принудительно.",
+                reply_markup=kb)
+            return
+        await callback.answer("Влито в main" if ok else (out or "Не удалось")[:180], show_alert=not ok)
         if ok:
             t0 = _office.store.get(task_id)
             if t0:

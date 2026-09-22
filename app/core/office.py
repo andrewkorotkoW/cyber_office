@@ -267,10 +267,16 @@ class Office:
             return ""
         return await worktree.diff_full(t.repo, t.branch, self.base_for(t.repo))
 
-    async def approve(self, task_id: str) -> tuple[bool, str]:
+    EMPTY_DIFF_MSG = "пустой дифф: агент ничего не изменил — отклоните задачу или примите принудительно"
+
+    async def approve(self, task_id: str, force: bool = False) -> tuple[bool, str]:
         t = self.store.get(task_id)
         if not t or t.status != "review":
             return False, "задача не на ревью"
+        # защита от приёма «пустой» задачи одной кнопкой: агент мог сдать её без единой правки
+        # (например, упёрся в запрет команды) — такую принимаем только с явным force
+        if not force and not (t.diff_stat or "").strip():
+            return False, self.EMPTY_DIFF_MSG
         status, out = await worktree.merge(t.repo, t.branch, f"{t.agent}: {t.title} (#{t.id})", self.base_for(t.repo))
         if status == "ok":
             t.merge_commit = out

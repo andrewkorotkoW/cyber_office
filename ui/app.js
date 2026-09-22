@@ -401,7 +401,14 @@ function renderPlanerkaEvents() {
 // если не передан, спрашиваем через uiPrompt как раньше.
 async function action(t, act, presetText) {
   try {
-    if (act === 'approve') { await api(`/api/tasks/${t.id}/approve`, 'POST'); }
+    if (act === 'approve') {
+      try { await api(`/api/tasks/${t.id}/approve`, 'POST'); }
+      catch (e) {
+        if (!/пустой дифф/.test(e.message)) throw e;
+        if (!confirm('В задаче нет изменений — агент ничего не сделал. Всё равно принять?')) return;
+        await api(`/api/tasks/${t.id}/approve?force=true`, 'POST');
+      }
+    }
     if (act === 'reject') { const text = presetText != null ? presetText : ((await uiPrompt('Почему отклоняешь? (пойдёт агенту при повторе)')) ?? ''); await api(`/api/tasks/${t.id}/reject`, 'POST', { text }); }
     if (act === 'retry') { const text = presetText != null ? presetText : ((await uiPrompt('Уточнение для агента (можно пусто)')) ?? ''); await api(`/api/tasks/${t.id}/retry`, 'POST', { text }); }
     if (act === 'stop') { await api(`/api/tasks/${t.id}/stop`, 'POST'); }
