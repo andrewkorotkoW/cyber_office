@@ -22,3 +22,4 @@ sandbox/
 assets/icon.iconset/
 workspace/launchd.*.log
 workspace/paused_repos.json
+allure-report/
