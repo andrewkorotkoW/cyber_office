@@ -16,6 +16,8 @@ def test_anim_dir_exists():
 def test_every_roster_avatar_has_all_animation_frames():
     missing = []
     for name, avatar in AVATAR_BY_NAME.items():
+        if not avatar:      # персонаж без портрета (например, Оскар до того, как владелец его нарисует)
+            continue
         base = avatar.rsplit(".", 1)[0]
         for suffix in FRAME_SUFFIXES:
             f = ANIM_DIR / f"{base}_{suffix}.png"
@@ -28,6 +30,8 @@ def test_sheet_is_1024x256_with_four_256px_frames():
     from PIL import Image
 
     for avatar in AVATAR_BY_NAME.values():
+        if not avatar:
+            continue
         base = avatar.rsplit(".", 1)[0]
         with Image.open(ANIM_DIR / f"{base}_sheet.png") as im:
             assert im.size == (1024, 256), f"{base}_sheet.png: ожидался размер 1024x256, получено {im.size}"

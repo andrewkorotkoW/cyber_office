@@ -11,6 +11,7 @@
   /newproject имя [описание] — создать новый проект и сделать его текущим
   /mission текст             — миссия: Майкл спланирует и раздаст
   /status                    — доска
+  /digest                    — сводка Оскара («что происходит»)
   /diff <id>                 — diff задачи файлом
 Когда задача готова, приходит карточка с кнопками «Одобрить / Отклонить / Повторить».
 """
@@ -147,7 +148,8 @@ async def start(message: Message) -> None:
         "• /repo — выбрать репозиторий\n"
         "• /newproject имя [описание] — создать новый проект\n"
         "• /mission текст — миссия: Майкл спланирует и раздаст команде\n"
-        "• /status — доска\n\n"
+        "• /status — доска\n"
+        "• /digest — сводка Оскара («что происходит»)\n\n"
         f"Текущий репозиторий: <b>{ESC(_repo_name(_repo_for(uid) or '')) or 'не выбран — /repo'}</b>",
         parse_mode="HTML")
 
@@ -243,6 +245,47 @@ async def status(message: Message) -> None:
     done = sum(1 for t in tasks if t.status == "done")
     lines.append(f"\nготово всего: {done}")
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("digest"))
+async def digest_cmd(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    from app.core import digest
+    cache = digest.load_cache()
+    if cache is None:
+        await message.answer("Оскар молчит: сводка ещё не собиралась."); return
+    text = cache.get("text")
+    if text:
+        await message.answer(f"🧮 <b>Оскар:</b>\n{ESC(text)}", parse_mode="HTML")
+        return
+    reason = cache.get("error") or "не запускался"
+    await message.answer(f"Оскар молчит: {ESC(reason)}\n\n{_facts_summary(cache.get('facts') or {})}",
+                         parse_mode="HTML")
+
+
+def _facts_summary(facts: dict) -> str:
+    lines = []
+    for bucket in (facts.get("repos") or {}).values():
+        parts = []
+        if bucket.get("missions"):
+            parts.append(f"миссии: {len(bucket['missions'])}")
+        if bucket.get("running"):
+            parts.append(f"в работе: {len(bucket['running'])}")
+        if bucket.get("review"):
+            parts.append(f"на ревью: {len(bucket['review'])}")
+        if bucket.get("todo"):
+            parts.append(f"в очереди: {len(bucket['todo'])}")
+        if bucket.get("failed_24h"):
+            parts.append(f"упало за сутки: {len(bucket['failed_24h'])}")
+        if bucket.get("paused"):
+            parts.append("на паузе")
+        lines.append(f"📁 <b>{ESC(bucket.get('name', '?'))}</b>: " + (", ".join(parts) if parts else "тихо"))
+    since = facts.get("since_last") or {}
+    if since:
+        lines.append(f"\nс прошлой сводки: сделано {since.get('done_tasks', 0)}, "
+                     f"упало {since.get('failed_tasks', 0)}, ≈${since.get('cost_usd', 0):.2f} по API")
+    return "\n".join(lines) if lines else "фактов пока нет"
 
 
 @router.message(Command("mission"))

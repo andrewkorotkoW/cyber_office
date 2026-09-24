@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config
-from app.core import allure, lock, procs, repo_init, scenarios, testlab, worktree
+from app.core import allure, digest, lock, procs, repo_init, scenarios, testlab, worktree
 from app.core.events import bus
 from app.core.office import Office, build_summary
 from app.core.planner import ClaudePlanner, FakePlanner
@@ -59,15 +59,21 @@ def acquire_lock() -> None:
 # сервера — main()/desktop._serve() — а не сам факт импорта модуля), не на импорте: раньше
 # создание office на импорте означало, что окно .app или тестовый импорт уже писали tasks.json.
 office: Office | None = None
+digest_scheduler: digest.DigestScheduler | None = None
 sockets: set[WebSocket] = set()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global office
+    global office, digest_scheduler
     office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
                     FakePlanner() if FAKE else ClaudePlanner(), base_for=_repo_base)
     office.resume_pending_auto_retries()
+    digest_scheduler = digest.DigestScheduler(
+        office.store, office.roster, office.paused_repos,
+        digest.FakeNarrator() if FAKE else digest.ClaudeNarrator(),
+        interval_min=config.AO_DIGEST_INTERVAL_MIN)
+    digest_scheduler.start()
     if config.TG_TOKEN and config.TG_ADMINS:
         from app import telegram
         asyncio.create_task(telegram.run(office, _repos, _after_merge_cmd, _register_repo))
@@ -76,6 +82,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        digest_scheduler.stop()
         # сервер останавливается — не оставлять сиротами claude/pytest/after_merge,
         # запущенные (start_new_session=True) за время его жизни
         procs.killall()
@@ -327,6 +334,30 @@ async def delete_mission(mission_id: str) -> dict:
         await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
         office.store.delete(t.id)
     del office.store.missions[mission_id]; office.store.save()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ сводка «Что происходит?» (Оскар)
+@app.get("/api/digest")
+async def digest_get() -> dict:
+    cache = digest.load_cache()
+    if cache is None:
+        facts = await digest.collect_facts(office.store, office.roster, office.paused_repos)
+        return {"facts": facts, "text": None, "generated_at": facts["generated_at"], "fresh": False}
+    return {"facts": cache.get("facts"), "text": cache.get("text"), "generated_at": cache.get("generated_at"),
+            "fresh": not cache.get("seen", False)}
+
+
+@app.post("/api/digest/refresh")
+async def digest_refresh() -> dict:
+    data = await digest_scheduler.refresh_now()
+    return {"facts": data.get("facts"), "text": data.get("text"), "generated_at": data.get("generated_at"),
+            "fresh": not data.get("seen", False)}
+
+
+@app.post("/api/digest/seen")
+async def digest_seen() -> dict:
+    digest.mark_seen()
     return {"ok": True}
 
 
