@@ -39,7 +39,12 @@
    - `POST /api/digest/seen` — владелец посмотрел: `fresh=false`, кнопка гаснет.
 3. Персонаж: в `DEFAULT_ROSTER` (`app/core/roster.py`) добавить
    `{"name": "oscar", "title": "Оскар · сводки и цифры", "desk": 3, "color": "#39ff88",
-   "avatar": "", "system": "<характер>"}`. Оскар **не берёт задачи из очереди**: в
+   "avatar": "oscar.png", "system": "<характер>"}` и `AVATAR_BY_NAME["oscar"] = "oscar.png"`.
+   Портрет владелец кладёт в `ui/assets/portraits/oscar.png` (256×256, стиль как у остальных),
+   анимационную ленту — в `ui/assets/portraits/anim/oscar_sheet.png` (1024×256, кадры
+   neutral|blink|talk1|talk2) с отдельными кадрами `oscar_neutral/blink/talk1/talk2.png`.
+   Пока файлов нет, фронт рисует спрайт без портрета и не падает (проверить: 404 на портрет
+   и на ленту не ломают шапку, модалку и офис). Оскар **не берёт задачи из очереди**: в
    `Office._dispatch`/выборе агента для todo он исключается (поле роли `reporter: true` или
    список `NON_WORKER_AGENTS`). Существующий `roster.json` в workspace без Оскара должен
    получить его при загрузке (миграция: если персонажа нет — добавить).
