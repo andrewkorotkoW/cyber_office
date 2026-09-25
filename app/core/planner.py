@@ -19,6 +19,7 @@ from typing import Protocol
 from app import config
 from app.config import CLAUDE_BIN
 from app.core import procs
+from app.core.runner import DESIGN_MD_HINT, looks_like_ui_task
 
 READ_ONLY_TOOLS = "Read,Grep,Glob,LS,Bash(ls*),Bash(cat*),Bash(git log*),Bash(git status*),Bash(find*),Bash(wc*)"
 
@@ -90,6 +91,16 @@ def parse_plan(text: str, known_agents: set[str], default_agent: str = "michael"
     return Plan(str(data.get("summary") or "").strip(), tasks)
 
 
+def _add_design_hint(plan: Plan, goal: str, repo: str) -> Plan:
+    """Дизайн-миссия (цель похожа на UI-работу) в репозитории с DESIGN.md — подсказать
+    ссылку на него в промпте каждой подзадачи, как это делает runner.design_md_addendum
+    для отдельных задач."""
+    if looks_like_ui_task(goal) and (Path(repo) / "DESIGN.md").exists():
+        for t in plan.tasks:
+            t.prompt += DESIGN_MD_HINT
+    return plan
+
+
 def _check_cycles(tasks: list[PlannedTask]) -> None:
     deps = {t.key: set(t.depends_on) for t in tasks}
     seen: set[str] = set()
@@ -144,15 +155,16 @@ class ClaudePlanner:
             raise RuntimeError(f"планировщик: {msg.get('result')}")
         plan = parse_plan(msg.get("result") or "", set(team))
         plan.cost_usd = float(msg.get("total_cost_usd") or 0)
-        return plan
+        return _add_design_hint(plan, goal, repo)
 
 
 class FakePlanner:
     async def plan(self, goal: str, repo: str, team: dict[str, str]) -> Plan:
         await asyncio.sleep(0.05)
         agents = list(team)
-        return Plan(f"Имитация плана для: {goal[:40]}", [
+        plan = Plan(f"Имитация плана для: {goal[:40]}", [
             PlannedTask("t1", "Реализовать основу", agents[0], f"Сделай основу для: {goal}", []),
             PlannedTask("t2", "Покрыть тестами", agents[1 % len(agents)], "Напиши тесты к основе", ["t1"]),
             PlannedTask("t3", "Обновить README", agents[2 % len(agents)], "Опиши изменения в README", ["t1"]),
         ])
+        return _add_design_hint(plan, goal, repo)

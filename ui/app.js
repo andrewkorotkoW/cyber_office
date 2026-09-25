@@ -113,14 +113,15 @@ function renderProjects() {
   const list = $('#projects-list'), sel = $('#projects-select'); if (!list || !sel) return;
   list.innerHTML = ''; sel.innerHTML = '';
   const addOption = (label, val) => { const o = document.createElement('option'); o.value = val; o.textContent = label; if (REPO_FILTER === val) o.selected = true; sel.appendChild(o); };
-  const addRow = (label, val, counts) => {
+  const addRow = (label, val, counts, hasDesignMd) => {
     const row = document.createElement('div'); row.className = 'project-row' + (REPO_FILTER === val ? ' on' : '');
-    row.innerHTML = `<span class="project-name">${esc(label)}</span>` + (counts ? `<span class="project-counts">${counts.review ? `<b class="c-review">${counts.review}</b>` : ''}${counts.running ? `<b class="c-running">${counts.running}</b>` : ''}<span class="c-total">${counts.total}</span></span>` : '');
+    const badge = hasDesignMd ? '<span class="design-badge" title="В репозитории есть DESIGN.md">DESIGN.md</span>' : '';
+    row.innerHTML = `<span class="project-name-wrap"><span class="project-name">${esc(label)}</span>${badge}</span>` + (counts ? `<span class="project-counts">${counts.review ? `<b class="c-review">${counts.review}</b>` : ''}${counts.running ? `<b class="c-running">${counts.running}</b>` : ''}<span class="c-total">${counts.total}</span></span>` : '');
     row.addEventListener('click', () => setRepoFilter(val));
     list.appendChild(row);
   };
-  addOption('Все проекты', ''); addRow('Все проекты', '', null);
-  for (const r of STATE.repos) { const name = r.split('/').pop(); addOption(name, r); addRow(name, r, projectCounts(r)); }
+  addOption('Все проекты', ''); addRow('Все проекты', '', null, false);
+  for (const r of STATE.repos) { const name = r.split('/').pop(); addOption(name, r); addRow(name, r, projectCounts(r), (STATE.design_md_repos || []).includes(r)); }
   sel.onchange = () => setRepoFilter(sel.value);
 }
 const visibleTask = (t) => !REPO_FILTER || t.repo === REPO_FILTER;

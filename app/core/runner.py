@@ -14,15 +14,59 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from app import config
 from app.config import CLAUDE_BIN, MAX_TURNS
 from app.core import procs
 from app.core.events import bus
+
+# Ключевые слова, по которым задача считается UI/дизайн-задачей — используются, чтобы решить,
+# добавлять ли в промпт агенту подсказку про DESIGN.md. Та же эвристика применяется к целям
+# миссий в app/core/planner.py.
+UI_TASK_KEYWORDS = ("ui", "css", "интерфейс", "вёрстк", "верстк", "дизайн", "тема")
+
+DESIGN_MD_HINT = ("\n\nВ этом репозитории есть DESIGN.md — следуй его токенам строго, "
+                   "CSS приводи к нему, не выдумывай новые цвета/отступы.")
+
+
+def looks_like_ui_task(text: str) -> bool:
+    low = text.lower()
+    return any(k in low for k in UI_TASK_KEYWORDS)
+
+
+def _repo_root_from_worktree(cwd: str) -> str | None:
+    """Задача выполняется в изолированном git-worktree (workspace/worktrees/<id>), а не в
+    самом репозитории — путь из repos.json не совпадает с cwd. Файл `.git` там содержит
+    "gitdir: <repo>/.git/worktrees/<id>", по нему и восстанавливаем путь до репозитория."""
+    try:
+        content = (Path(cwd) / ".git").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.match(r"gitdir:\s*(.+)", content.strip())
+    if not m:
+        return None
+    gitdir = Path(m.group(1))
+    if gitdir.parent.name == "worktrees" and gitdir.parent.parent.name == ".git":
+        return str(gitdir.parent.parent.parent)
+    return None
+
+
+def design_md_addendum(prompt: str, cwd: str, ui_repo_fn: Callable[[str], bool]) -> str:
+    """Доп. блок промпта про DESIGN.md — только если он есть в репозитории задачи И задача
+    похожа на UI-работу (по тексту промпта или явному флагу "ui" репозитория в repos.json)."""
+    if not (Path(cwd) / "DESIGN.md").exists():
+        return ""
+    if looks_like_ui_task(prompt):
+        return DESIGN_MD_HINT
+    repo_root = _repo_root_from_worktree(cwd)
+    if repo_root and ui_repo_fn(repo_root):
+        return DESIGN_MD_HINT
+    return ""
 
 ALLOWED_TOOLS = ",".join([
     "Read", "Edit", "Write", "MultiEdit", "Grep", "Glob", "LS", "TodoWrite",
@@ -96,10 +140,13 @@ def _summarize_tool(name: str, inp: dict) -> str:
 
 
 class ClaudeRunner:
-    def __init__(self, binary: str = CLAUDE_BIN, max_turns: int = MAX_TURNS) -> None:
+    def __init__(self, binary: str = CLAUDE_BIN, max_turns: int = MAX_TURNS,
+                 ui_repo_fn: Callable[[str], bool] | None = None) -> None:
         self.binary, self.max_turns = binary, max_turns
+        self.ui_repo_fn = ui_repo_fn or (lambda repo: False)   # repos.json: явный флаг "ui" репозитория
 
     async def run(self, agent: str, system: str, model: str, prompt: str, cwd: str, task_id: str) -> RunResult:
+        prompt = prompt + design_md_addendum(prompt, cwd, self.ui_repo_fn)
         args = [
             self.binary, "-p", prompt,
             "--output-format", "stream-json", "--verbose",

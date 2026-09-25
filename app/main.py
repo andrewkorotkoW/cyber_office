@@ -66,7 +66,8 @@ sockets: set[WebSocket] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global office, digest_scheduler
-    office = Office(TaskStore(config.TASKS_FILE), Roster(), FakeRunner(delay=0.6) if FAKE else ClaudeRunner(),
+    office = Office(TaskStore(config.TASKS_FILE), Roster(),
+                    FakeRunner(delay=0.6) if FAKE else ClaudeRunner(ui_repo_fn=_repo_ui_flag),
                     FakePlanner() if FAKE else ClaudePlanner(), base_for=_repo_base)
     office.resume_pending_auto_retries()
     digest_scheduler = digest.DigestScheduler(
@@ -134,6 +135,15 @@ def _repo_base(repo: str) -> str | None:
         if e["path"] == repo:
             return e.get("base")
     return None
+
+
+def _repo_ui_flag(repo: str) -> bool:
+    """repos.json: "ui": true — репозиторий считается UI-проектом даже если текст задачи
+    не содержит характерных слов (см. runner.design_md_addendum)."""
+    for e in _repo_entries():
+        if e["path"] == repo:
+            return bool(e.get("ui"))
+    return False
 
 
 async def _run_after_merge(repo: str, task_id: str) -> None:
@@ -211,6 +221,7 @@ async def new_repo(body: RepoNewIn) -> dict:
 async def state() -> dict:
     snap = office.snapshot()
     snap["repos"] = _repos()
+    snap["design_md_repos"] = [r for r in snap["repos"] if (Path(r) / "DESIGN.md").exists()]
     snap["mode"] = "fake" if FAKE else "claude"
     snap["claude_bin"] = config.CLAUDE_BIN if Path(config.CLAUDE_BIN).exists() else None
     return snap

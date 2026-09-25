@@ -80,7 +80,9 @@ main { display:flex; gap:12px; padding:12px; height:calc(100vh - 56px); min-heig
 .project-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; margin-bottom:2px; cursor:pointer; border:2px solid transparent; font-size:12.5px }
 .project-row:hover { background:var(--card) }
 .project-row.on { border-color:var(--accent); background:var(--card); color:var(--accent) }
+.project-name-wrap { display:flex; align-items:center; gap:5px; overflow:hidden; min-width:0 }
 .project-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.design-badge { flex:none; font-size:9px; padding:1px 4px; border:1px solid var(--blue); color:var(--blue) }
 .project-counts { display:flex; gap:4px; flex:none }
 .project-counts b { font-style:normal; font-size:10.5px; padding:0 5px; border:1px solid var(--line) }
 .project-counts .c-review { color:var(--warn); border-color:var(--warn) }
