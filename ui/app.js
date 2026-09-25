@@ -745,6 +745,77 @@ $('#btn-notify').addEventListener('click', () => { renderNotifyList(); $('#dlg-n
 $('#btn-notify-read-all').addEventListener('click', () => { NOTIFICATIONS.forEach(n => n.read = true); saveNotifications(); renderNotifyList(); });
 renderNotifyBadge();
 
+// ---- сводка «Что происходит?» (Оскар · сводки и цифры): #btn-digest светится по digest.ready/fresh,
+// клик — GET /api/digest, показываем модалку, гасим кнопку через POST /api/digest/seen
+function mountDigestPortrait(agent) {
+  const el = $('#digest-avatar'); if (!el) return;
+  PORTRAITS.oscar?.stop();
+  PORTRAITS.oscar = null;
+  el.classList.remove('no-avatar');
+  el.style.backgroundImage = ''; el.textContent = '';
+  if (agent && agent.avatar && window.LivePortrait) {
+    PORTRAITS.oscar = window.LivePortrait.mount(el, agent.avatar);
+  } else {
+    // avatar пуст — плашка с инициалом вместо картинки (см. ui/style.css .no-avatar), как «спрайт
+    // без портрета», которым floor.js рисует агентов без собственной палитры (CHAR_PALETTE)
+    el.classList.add('no-avatar');
+    el.textContent = ((agent && agent.title) || 'О').trim().charAt(0);
+  }
+}
+function renderDigestRepo(repo) {
+  const missions = (repo.missions || []).map(m => `<div class="digest-mission"><div class="t">${esc(m.goal)}</div>
+      <div class="bar"><i style="width:${m.total ? Math.round(m.done / m.total * 100) : 0}%"></i></div>
+      <div class="m">${m.done}/${m.total} задач</div></div>`).join('');
+  const running = (repo.running || []).map(t => `<div class="digest-item">🛠 ${esc(agentTitle(t.agent))}: ${esc(t.title)}</div>`).join('');
+  const review = (repo.review || []).map(t => `<div class="digest-item digest-clickable" data-task-id="${esc(t.id)}">📝 ${esc(agentTitle(t.agent))}: ${esc(t.title)}</div>`).join('');
+  const todo = (repo.todo || []).map(t => `<div class="digest-item">⏳ ${esc(t.title)}</div>`).join('');
+  const failed = (repo.failed_24h || []).map(t => `<div class="digest-item digest-failed">❌ ${esc(t.title)}${t.error ? ' — ' + esc(t.error) : ''}</div>`).join('');
+  const testhub = repo.testhub ? `<div class="digest-testhub">🧪 test_hub: ${repo.testhub.passed || 0} прошло / ${repo.testhub.failed || 0} упало${repo.testhub.stand ? ' · ' + esc(repo.testhub.stand) : ''}</div>` : '';
+  const paused = repo.paused ? '<span class="tag" style="color:var(--warn);border-color:var(--warn)">⏸ на паузе</span>' : '';
+  const empty = !missions && !running && !review && !todo && !failed ? '<div class="log">Тихо.</div>' : '';
+  return `<div class="digest-repo"><h4>${esc(repo.name)}${paused}</h4>${missions}${running}${review}${todo}${failed}${testhub}${empty}</div>`;
+}
+function renderDigestFacts(facts) {
+  const repos = Object.values(facts.repos || {});
+  const since = facts.since_last || {};
+  const repoHtml = repos.length ? repos.map(renderDigestRepo).join('') : '<div class="log">Пока нет данных по репозиториям.</div>';
+  const sinceHtml = `<div class="digest-since"><label>С прошлой сводки</label>
+    <span class="tag">✅ сдано: ${since.done_tasks || 0}</span>
+    <span class="tag">🎯 миссий: ${since.done_missions || 0}</span>
+    <span class="tag">⚠️ упало: ${since.failed_tasks || 0}</span>
+    ${since.cost_usd ? `<span class="tag">≈$${since.cost_usd.toFixed(2)} по API</span>` : ''}</div>`;
+  return `<div class="digest-repos">${repoHtml}</div>${sinceHtml}`;
+}
+function renderDigest(data) {
+  const facts = data.facts || {};
+  $('#digest-time').textContent = data.generated_at ? '· ' + fmtTime(data.generated_at) : '';
+  mountDigestPortrait(STATE.agents.find(a => a.name === 'oscar'));
+  typeSpeech('oscar', $('#digest-speech'), data.text || 'Оскар молчит: сводка ещё не собрана.', 14);
+  $('#digest-facts').innerHTML = renderDigestFacts(facts);
+  $('#digest-facts').querySelectorAll('[data-task-id]').forEach(el => el.addEventListener('click', () => openTask(el.dataset.taskId)));
+}
+async function markDigestSeen() {
+  $('#btn-digest').classList.remove('fresh');
+  try { await api('/api/digest/seen', 'POST'); } catch (e) {}
+}
+$('#btn-digest').addEventListener('click', async () => {
+  let data;
+  try { data = await api('/api/digest'); } catch (e) { uiAlert(e.message); return; }
+  renderDigest(data);
+  $('#dlg-digest').showModal();
+  await markDigestSeen();
+});
+$('#digest-ok').addEventListener('click', () => { $('#dlg-digest').close(); markDigestSeen(); });
+$('#dlg-digest').addEventListener('close', () => { PORTRAITS.oscar?.stop(); SPEECH_TYPING.oscar?.cancel?.(); });
+$('#digest-refresh').addEventListener('click', async (e) => {
+  const btn = e.currentTarget, label = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Обновляю…';
+  try { renderDigest(await api('/api/digest/refresh', 'POST')); await markDigestSeen(); }
+  catch (e2) { uiAlert(e2.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+});
+(async () => { try { const d = await api('/api/digest'); if (d.fresh) $('#btn-digest').classList.add('fresh'); } catch (e) {} })();
+
 // ---- лента + события
 const term = $('#term');
 function termLine(cls, who, text, agent, repo) {
@@ -842,6 +913,14 @@ function connect() {
       if (ev.data.error) alert('Запись сценария: ' + ev.data.error);
       else termLine('state', 'офис', '🎬 сценарий записан: ' + ev.data.name);
       if (isBikeFit(TESTS_REPO)) loadScenarios();
+    }
+    else if (ev.kind === 'digest.ready') {
+      $('#btn-digest').classList.add('fresh');
+      // бэкенд шлёт только «сводка готова» — стадии «идёт сборка» отдельным событием нет, поэтому
+      // «Считаю…» — короткая заглушка на клиенте перед финальной репликой (см. миссию Оскара)
+      Floor.setState('oscar', 'working');
+      Floor.say('oscar', 'Считаю…', 1200);
+      setTimeout(() => { Floor.setState('oscar', 'idle'); Floor.say('oscar', 'Сводка готова', 4000); }, 1200);
     }
   };
   ws.onclose = () => {
