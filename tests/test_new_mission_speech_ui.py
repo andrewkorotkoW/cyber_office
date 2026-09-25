@@ -19,7 +19,9 @@ def test_new_and_mission_dialogs_have_speech_blocks():
     assert 'id="new-speech"' in INDEX_HTML
     assert 'class="speech"' in INDEX_HTML
     assert 'id="mission-speech"' in INDEX_HTML
-    assert INDEX_HTML.count('class="speech"') == 2
+    # три блока реплик: «Задача», «Миссия» и сводка «Что происходит?» (digest-speech, 25.09.2026)
+    assert 'id="digest-speech"' in INDEX_HTML
+    assert INDEX_HTML.count('class="speech"') == 3
 
 
 def test_speech_blocks_sit_under_the_character_name_in_head_person():
