@@ -14,6 +14,7 @@
   <img src="ui/assets/team.png" alt="команда" class="team-strip" title="Команда">
   <span id="mode" class="mode">…</span>
   <button id="btn-notify" class="small notify-bell" aria-label="Уведомления" title="Уведомления">🔔<span id="notify-badge" class="badge" hidden>0</span></button>
+  <button id="btn-digest" class="small" aria-label="Что происходит?" title="Что происходит?">📋 Что происходит?</button>
   <span class="spacer"></span>
   <button id="btn-menu" class="small burger" aria-label="Меню" aria-expanded="false">☰</button>
   <div class="header-menu" id="header-menu">
@@ -212,6 +213,27 @@
       <thead><tr><th>Тест</th><th>Suite</th><th>Файл</th><th>Длительность</th><th>Статус</th></tr></thead>
       <tbody id="report-table-body"></tbody>
     </table>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-digest" class="wide">
+  <div class="head">
+    <div class="head-person oscar">
+      <div class="live-portrait" id="digest-avatar" role="img" aria-label="Оскар"></div>
+      <div class="head-person-text">
+        <div class="who">Оскар <span class="digest-time" id="digest-time"></span></div>
+        <div class="speech" id="digest-speech"></div>
+      </div>
+    </div>
+    <h3>Что происходит?</h3>
+    <button class="small" onclick="this.closest('dialog').close()">✕</button>
+  </div>
+  <div class="content">
+    <div id="digest-facts"><div class="log">Загрузка…</div></div>
+    <div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="digest-refresh" class="small">↻ Обновить</button>
+      <button class="primary" id="digest-ok">Понятно</button>
     </div>
   </div>
 </dialog>

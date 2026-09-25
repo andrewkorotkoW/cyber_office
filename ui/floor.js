@@ -327,7 +327,7 @@
     agents = list.map((a, i) => {
       const prev = agents.find(x => x.name === a.name);
       const home = homes[i];
-      return Object.assign({ x: home.x, y: home.y, frame: 0, mail: null }, prev || {}, a, { home });
+      return Object.assign({ x: home.x, y: home.y, frame: 0, mail: null, speech: null }, prev || {}, a, { home });
     });
   }
   function setState(name, state) { const a = agents.find(x => x.name === name); if (a) a.state = state; }
@@ -347,6 +347,13 @@
     // событийная шина, о которой просила задача — отдельного Floor.notify() не нужно, эти два вызова
     // envelope() уже приходят из app.js на статусы review/done (см. app.js: Floor.envelope('out'/'banana', ...))
     if (kind === 'out' || kind === 'banana') dogReactTo(name);
+  }
+
+  // реплика над головой агента на ms миллисекунд (например, Оскар: «Считаю…» / «Сводка готова») —
+  // тот же приём, что и a.mail: временное поле, drawActors рисует и гасит его по истечении жизни
+  function say(name, text, ms) {
+    const a = agents.find(x => x.name === name); if (!a) return;
+    a.speech = { text, life: Math.max(1, Math.round((ms || 2000) / 16)) };
   }
 
   // площадь пола для прогулок котов — считается от LW/LH, не от текущих чисел
@@ -1022,7 +1029,22 @@
       o.font = '13px "Pixelify Sans", monospace';
       drawLabel(STATE_LABELS[a.state] || a.state, a.home.x, a.home.y + S(24), TH.mute);
       o.font = '600 14px "Pixelify Sans", monospace';
+      if (a.speech) drawSpeechBubble(a.speech.text, a.home.x, a.home.y - S(78));
     }
+  }
+
+  // короткая реплика-заглушка над головой (a.speech, см. say()) — пиксельный прямоугольник с текстом,
+  // тот же принцип читаемости, что и drawLabel (обводка на cyberpunk-сцене)
+  function drawSpeechBubble(text, cx, y) {
+    o.font = '600 12px "Pixelify Sans", monospace';
+    const w = Math.round(o.measureText(text).width) + S(12), h = S(18);
+    const x = Math.round(cx - w / 2);
+    o.fillStyle = 'rgba(10,12,24,0.82)'; o.fillRect(x, y, w, h);
+    o.strokeStyle = TH.mute; o.lineWidth = 1; o.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    o.textBaseline = 'middle';
+    drawLabel(text, cx, y + h / 2, TH.text);
+    o.textBaseline = 'top';
+    o.font = '600 14px "Pixelify Sans", monospace';
   }
 
   function drawWorld(t) {
@@ -1138,6 +1160,7 @@
   function frame(t) {
     if (!W) resize();
     for (const a of agents) { if (a.mail && --a.mail.life <= 0) a.mail = null; }
+    for (const a of agents) { if (a.speech && --a.speech.life <= 0) a.speech = null; }
     for (const cat of cats) stepCat(cat);
     stepDog(t);
     o.clearRect(0, 0, LW, LH);
@@ -1175,7 +1198,7 @@
       });
       ro.observe(canvas.parentElement);
     }
-    window.Floor = { setAgents, setState, envelope, setBackground, setTheme };
+    window.Floor = { setAgents, setState, envelope, setBackground, setTheme, say };
     document.fonts && document.fonts.load('8px "Pixelify Sans"').catch(() => {});
     requestAnimationFrame(frame);
   }
