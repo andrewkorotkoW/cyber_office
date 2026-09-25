@@ -2,9 +2,12 @@
 обязательные ключи, ссылки {a.b.c}, hex-цвета) и порядок ##-разделов."""
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
-from app.core.design_md import lint_file, lint_text
+from app import config
+from app.core.design_md import lint_file, lint_text, main
 
 VALID = """---
 version: "1"
@@ -157,3 +160,42 @@ def test_missing_required_section():
     text = VALID.replace("## Shapes\n\n", "")
     issues = lint_text(text)
     assert any("'## Shapes'" in i for i in issues)
+
+
+# ------------------------------------------------------------------ CLI: python -m app.core.design_md lint
+def test_cli_main_returns_0_on_valid_file(tmp_path, capsys):
+    path = tmp_path / "DESIGN.md"
+    path.write_text(VALID, encoding="utf-8")
+    assert main(["lint", str(path)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_main_returns_1_on_invalid_file(tmp_path, capsys):
+    path = tmp_path / "DESIGN.md"
+    path.write_text("# hi\n", encoding="utf-8")
+    assert main(["lint", str(path)]) == 1
+    assert "front matter" in capsys.readouterr().out
+
+
+def test_cli_main_returns_1_when_file_missing(tmp_path, capsys):
+    assert main(["lint", str(tmp_path / "nope.md")]) == 1
+    assert "не найден" in capsys.readouterr().out
+
+
+def test_cli_subprocess_end_to_end(tmp_path):
+    valid_path = tmp_path / "valid.md"
+    valid_path.write_text(VALID, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "app.core.design_md", "lint", str(valid_path)],
+        cwd=str(config.ROOT), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    invalid_path = tmp_path / "invalid.md"
+    invalid_path.write_text("# hi\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "app.core.design_md", "lint", str(invalid_path)],
+        cwd=str(config.ROOT), capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "front matter" in result.stdout
