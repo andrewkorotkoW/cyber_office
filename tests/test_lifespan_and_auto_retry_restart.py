@@ -65,7 +65,7 @@ def test_entering_lifespan_alone_does_not_write_tasks_json(workspace, monkeypatc
         assert resp.status_code == 200
         # GET /api/state — те же верхнеуровневые ключи, что и раньше (обратная совместимость)
         state = client.get("/api/state").json()
-        assert set(state) == {"agents", "tasks", "missions", "repos", "mode", "claude_bin"}
+        assert set(state) == {"agents", "tasks", "missions", "repos", "design_md_repos", "mode", "claude_bin"}
         assert not config.TASKS_FILE.exists()      # ключ у state есть, а файла всё ещё нет
 
         resp = client.post("/api/tasks", json={"title": "T", "prompt": "p",
