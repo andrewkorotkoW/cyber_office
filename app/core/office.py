@@ -17,7 +17,7 @@ from typing import Callable
 from app.core import memory, procs, worktree
 from app.core.events import bus
 from app.core.planner import Planner
-from app.core.roster import Roster
+from app.core.roster import NON_WORKER_AGENTS, Roster
 from app.core.runner import Runner, RunResult, infra_failure_reason
 from app.core.tasks import Mission, Task, TaskStore
 
@@ -112,6 +112,8 @@ class Office:
     async def create_task(self, title: str, prompt: str, repo: str, agent: str) -> Task:
         if not self.roster.get(agent):
             raise ValueError(f"нет агента {agent}")
+        if agent in NON_WORKER_AGENTS:
+            raise ValueError(f"{agent} не берёт задачи из очереди")
         if not await worktree.is_repo(repo):
             raise ValueError(f"{repo} — не git-репозиторий")
         task = self.store.create(title, prompt, repo, agent)
@@ -153,7 +155,7 @@ class Office:
     def kick(self, agent: str) -> None:
         """Если агент свободен и у него есть todo — запускаем следующую (репозитории на паузе пропускаем)."""
         a = self.roster.get(agent)
-        if a is None or a.state != "idle" or agent in self._running:
+        if a is None or a.state != "idle" or agent in self._running or agent in NON_WORKER_AGENTS:
             return
         todo = [t for t in self.store.by_status("todo")
                 if t.agent == agent and self.store.deps_done(t) and t.repo not in self.paused_repos]
@@ -473,7 +475,9 @@ class Office:
         await bus.emit("agent.state", lead.name, None, state="planning")
         await bus.emit("agent.text", lead.name, None, text=f"Планирую миссию: {m.goal[:120]}")
         try:
-            team = {a.name: a.title for a in self.roster.agents.values()}
+            # Оскар не берёт задачи — не предлагаем его планировщику ни в команде, ни как
+            # допустимого исполнителя (parse_plan проверяет agent по ключам team)
+            team = {a.name: a.title for a in self.roster.agents.values() if a.name not in NON_WORKER_AGENTS}
             plan = await self.planner.plan(m.goal, m.repo, team)
             if m.id not in self.store.missions:      # миссию удалили, пока шло планирование
                 return

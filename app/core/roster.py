@@ -9,7 +9,12 @@ from app.config import DEFAULT_MODEL, ROSTER_FILE
 
 # имя -> файл портрета в ui/assets/portraits/ (256×256 PNG); используется и как дефолт для записей
 # roster.json без поля avatar (старые файлы), и на этаже (ui/floor.js) для выбора именного спрайта тела
-AVATAR_BY_NAME = {"michael": "beard.png", "dwight": "cyborg.png", "pam": "pink.png"}
+AVATAR_BY_NAME = {"michael": "beard.png", "dwight": "cyborg.png", "pam": "pink.png", "oscar": ""}
+
+# персонажи, которые не берут задачи из очереди (docs/missions/2026-09-25_status_button_oscar.md) —
+# Оскар только считает и докладывает, исполнителем ни при создании задачи, ни при диспетчеризации
+# todo, ни в плане миссии он быть не может (см. app.core.office)
+NON_WORKER_AGENTS = {"oscar"}
 
 DEFAULT_ROSTER = [
     {"name": "michael", "title": "Майкл · генералист", "model": DEFAULT_MODEL, "desk": 0, "color": "#4f8cff",
@@ -25,6 +30,12 @@ DEFAULT_ROSTER = [
      "avatar": "pink.png",
      "system": "Ты технический писатель. README, докстринги, комментарии, changelog. Пишешь коротко и по делу, "
                "на русском, без воды. Код не меняешь."},
+    {"name": "oscar", "title": "Оскар · сводки и цифры", "model": DEFAULT_MODEL, "desk": 3, "color": "#39ff88",
+     "avatar": "",
+     "system": "Ты бухгалтер офиса. Точный и сухой: считаешь задачи, миссии и проценты выполнения, "
+               "сравниваешь с прошлой сводкой. Никаких предположений сверх цифр, которые тебе дали, "
+               "никакой лести и воды — только факты и числа, коротко. Задач на выполнение ты не берёшь: "
+               "твоя работа — доклад, а не код."},
 ]
 
 
@@ -53,7 +64,13 @@ class Roster:
         if not ROSTER_FILE.exists():
             ROSTER_FILE.parent.mkdir(parents=True, exist_ok=True)
             ROSTER_FILE.write_text(json.dumps(DEFAULT_ROSTER, ensure_ascii=False, indent=2), encoding="utf-8")
-        for raw in json.loads(ROSTER_FILE.read_text(encoding="utf-8")):
+        raw_list = json.loads(ROSTER_FILE.read_text(encoding="utf-8"))
+        # миграция: roster.json, сохранённый до появления Оскара, не содержит его — дописываем,
+        # чтобы существующие офисы получили персонажа без ручной правки файла
+        if not any(r.get("name") == "oscar" for r in raw_list):
+            raw_list.append(next(dict(d) for d in DEFAULT_ROSTER if d["name"] == "oscar"))
+            ROSTER_FILE.write_text(json.dumps(raw_list, ensure_ascii=False, indent=2), encoding="utf-8")
+        for raw in raw_list:
             raw = {k: v for k, v in raw.items() if k in ("name", "title", "system", "model", "desk", "color", "avatar")}
             raw.setdefault("avatar", AVATAR_BY_NAME.get(raw.get("name", ""), ""))  # старый roster.json без avatar не ломается
             self.agents[raw["name"]] = Agent(**raw)
