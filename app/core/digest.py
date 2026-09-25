@@ -1,5 +1,5 @@
 """Сводка «Что происходит?»: факты считает код (детерминированно, без claude),
-персонаж Оскар (точный сухой бухгалтер) поверх них пишет 3-5 предложений одним
+персонаж Ральф (корги-докладчик) поверх них пишет 3-5 предложений одним
 вызовом `claude -p`. Кэш — workspace/digest.json (tmp-файл + .replace(), по
 образцу app.core.tasks/app.core.testlab).
 """
@@ -25,11 +25,11 @@ from app.core.roster import Roster
 from app.core.tasks import TaskStore
 
 DIGEST_FILE = config.WORKSPACE / "digest.json"
-DIGEST_TIMEOUT = 60          # секунд на вызов claude -p Оскаром
+DIGEST_TIMEOUT = 60          # секунд на вызов claude -p Ральфом
 TESTHUB_URL = "http://127.0.0.1:8700/api/projects/{name}/runs"
 TESTHUB_TIMEOUT = 2.0
 
-NARRATE_PROMPT = """Ты — Оскар, бухгалтер офиса разработки: точный, сухой, любишь цифры и не любишь воду.
+NARRATE_PROMPT = """Ты — Ральф, корги владельца и докладчик офиса разработки: внимательный, бодрый, любишь цифры и косточки, не любишь воду.
 По данным ниже (JSON — факты о репозиториях, задачах и агентах офиса) напиши сводку "что сейчас
 происходит" для владельца офиса. 3-5 предложений на русском, только по существу: что в работе,
 что на ревью, что упало и почему, что изменилось с прошлой сводки. Без предположений сверх данных,
@@ -120,14 +120,14 @@ async def collect_facts(store: TaskStore, roster: Roster, paused: set[str], test
 
 
 def _public_facts(facts: dict) -> dict:
-    """То, что видит Оскар в промпте: имена репозиториев, а не абсолютные пути с домашней
+    """То, что видит Ральф в промпте: имена репозиториев, а не абсолютные пути с домашней
     директорией пользователя. Остальные поля фактов уже публичные (title/status/agent/error[:200])."""
     repos = [{k: v for k, v in bucket.items()} for bucket in (facts.get("repos") or {}).values()]
     return {"generated_at": facts.get("generated_at"), "repos": repos, "agents": facts.get("agents", []),
             "since_last": facts.get("since_last", {})}
 
 
-# ------------------------------------------------------------------ Оскар пишет текст
+# ------------------------------------------------------------------ Ральф пишет текст
 class Narrator(Protocol):
     async def narrate(self, facts: dict) -> str: ...
 
@@ -151,7 +151,7 @@ class ClaudeNarrator:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            raise RuntimeError(f"Оскар не ответил за {DIGEST_TIMEOUT}с — таймаут")
+            raise RuntimeError(f"Ральф не ответил за {DIGEST_TIMEOUT}с — таймаут")
         except asyncio.CancelledError:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -163,9 +163,9 @@ class ClaudeNarrator:
         try:
             msg = json.loads(out.decode("utf-8", errors="replace"), strict=False)
         except json.JSONDecodeError:
-            raise RuntimeError(f"Оскар не ответил JSON: {err.decode(errors='replace')[-300:]}")
+            raise RuntimeError(f"Ральф не ответил JSON: {err.decode(errors='replace')[-300:]}")
         if msg.get("is_error"):
-            raise RuntimeError(f"Оскар: {msg.get('result')}")
+            raise RuntimeError(f"Ральф: {msg.get('result')}")
         return str(msg.get("result") or "").strip()
 
 
@@ -174,7 +174,7 @@ class FakeNarrator:
         await asyncio.sleep(0.05)
         n_repos = len(facts.get("repos") or {})
         since = facts.get("since_last") or {}
-        return (f"Оскар (имитация): под наблюдением {n_repos} репозиториев, "
+        return (f"Ральф (имитация): под наблюдением {n_repos} репозиториев, "
                 f"с прошлой сводки сделано {since.get('done_tasks', 0)}, упало {since.get('failed_tasks', 0)}.")
 
 
@@ -208,7 +208,7 @@ def fingerprint(facts: dict) -> str:
 # ------------------------------------------------------------------ планировщик
 class DigestScheduler:
     """Каждые interval_min минут пересобирает факты; если отпечаток не изменился —
-    ничего не делает (Оскара не дёргаем, событие не шлём). refresh_now() — для кнопки
+    ничего не делает (Ральфа не дёргаем, событие не шлём). refresh_now() — для кнопки
     «Обновить»: форсирует пересбор и вызов narrate независимо от таймера/отпечатка."""
 
     def __init__(self, store: TaskStore, roster: Roster, paused: set[str], narrator: Narrator,

@@ -11,7 +11,7 @@
   /newproject имя [описание] — создать новый проект и сделать его текущим
   /mission текст             — миссия: Майкл спланирует и раздаст
   /status                    — доска
-  /digest                    — сводка Оскара («что происходит»)
+  /digest                    — сводка Ральфа («что происходит»)
   /diff <id>                 — diff задачи файлом
 Когда задача готова, приходит карточка с кнопками «Одобрить / Отклонить / Повторить».
 """
@@ -149,7 +149,7 @@ async def start(message: Message) -> None:
         "• /newproject имя [описание] — создать новый проект\n"
         "• /mission текст — миссия: Майкл спланирует и раздаст команде\n"
         "• /status — доска\n"
-        "• /digest — сводка Оскара («что происходит»)\n\n"
+        "• /digest — сводка Ральфа («что происходит»)\n\n"
         f"Текущий репозиторий: <b>{ESC(_repo_name(_repo_for(uid) or '')) or 'не выбран — /repo'}</b>",
         parse_mode="HTML")
 
@@ -254,13 +254,13 @@ async def digest_cmd(message: Message) -> None:
     from app.core import digest
     cache = digest.load_cache()
     if cache is None:
-        await message.answer("Оскар молчит: сводка ещё не собиралась."); return
+        await message.answer("Ральф молчит: сводка ещё не собиралась."); return
     text = cache.get("text")
     if text:
-        await message.answer(f"🧮 <b>Оскар:</b>\n{ESC(text)}", parse_mode="HTML")
+        await message.answer(f"🧮 <b>Ральф:</b>\n{ESC(text)}", parse_mode="HTML")
         return
     reason = cache.get("error") or "не запускался"
-    await message.answer(f"Оскар молчит: {ESC(reason)}\n\n{_facts_summary(cache.get('facts') or {})}",
+    await message.answer(f"Ральф молчит: {ESC(reason)}\n\n{_facts_summary(cache.get('facts') or {})}",
                          parse_mode="HTML")
 
 

@@ -83,7 +83,7 @@ async def test_collect_facts_covers_missions_review_failed_and_paused(workspace)
     assert failed_entry["error"] == "API error: 529 overloaded"
 
     agent_names = {a["name"] for a in facts["agents"]}
-    assert {"michael", "dwight", "pam", "oscar"} <= agent_names
+    assert {"michael", "dwight", "pam", "ralph"} <= agent_names
 
     assert "generated_at" in facts and "since_last" in facts
 

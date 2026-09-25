@@ -348,7 +348,7 @@ async def delete_mission(mission_id: str) -> dict:
     return {"ok": True}
 
 
-# ------------------------------------------------------------------ сводка «Что происходит?» (Оскар)
+# ------------------------------------------------------------------ сводка «Что происходит?» (Ральф)
 @app.get("/api/digest")
 async def digest_get() -> dict:
     cache = digest.load_cache()

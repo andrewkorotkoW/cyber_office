@@ -16,7 +16,7 @@ def test_anim_dir_exists():
 def test_every_roster_avatar_has_all_animation_frames():
     missing = []
     for name, avatar in AVATAR_BY_NAME.items():
-        if not avatar:      # персонаж без портрета (например, Оскар до того, как владелец его нарисует)
+        if not avatar:      # персонаж без портрета (например, Ральф до того, как владелец его нарисует)
             continue
         base = avatar.rsplit(".", 1)[0]
         for suffix in FRAME_SUFFIXES:

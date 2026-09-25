@@ -37,9 +37,9 @@ def test_roster_json_with_explicit_avatar_is_preserved(workspace):
     assert roster.get("michael").avatar == "custom.png"
 
 
-# ------------------------------------------------------------ миграция Оскара
+# ------------------------------------------------------------ миграция Ральфа
 
-def test_roster_json_without_oscar_gets_migrated_on_load(workspace):
+def test_roster_json_without_ralph_gets_migrated_on_load(workspace):
     old = [
         {"name": "michael", "title": "Майкл", "model": "sonnet", "desk": 0, "color": "#f05a46",
          "avatar": "beard.png", "system": "Тест."},
@@ -49,13 +49,13 @@ def test_roster_json_without_oscar_gets_migrated_on_load(workspace):
     config.ROSTER_FILE.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
 
     roster = Roster()
-    oscar = roster.get("oscar")
-    assert oscar is not None
-    assert oscar.desk == 3
-    assert oscar.color == "#39ff88"
+    ralph = roster.get("ralph")
+    assert ralph is not None
+    assert ralph.desk == 3
+    assert ralph.color == "#39ff88"
 
     on_disk = json.loads(config.ROSTER_FILE.read_text(encoding="utf-8"))
-    assert any(r.get("name") == "oscar" for r in on_disk)   # миграция дописана на диск
+    assert any(r.get("name") == "ralph" for r in on_disk)   # миграция дописана на диск
 
 
 def test_roster_migration_is_idempotent_on_repeated_load(workspace):
@@ -68,17 +68,32 @@ def test_roster_migration_is_idempotent_on_repeated_load(workspace):
     Roster()
 
     on_disk = json.loads(config.ROSTER_FILE.read_text(encoding="utf-8"))
-    assert sum(1 for r in on_disk if r.get("name") == "oscar") == 1
+    assert sum(1 for r in on_disk if r.get("name") == "ralph") == 1
 
 
-def test_default_roster_already_has_oscar_no_migration_write(workspace):
-    """roster.json, созданный «с нуля» (без файла) уже содержит Оскара из DEFAULT_ROSTER —
+def test_default_roster_already_has_ralph_no_migration_write(workspace):
+    """roster.json, созданный «с нуля» (без файла) уже содержит Ральфа из DEFAULT_ROSTER —
     миграционная ветка (дозапись) не должна срабатывать повторно."""
     roster = Roster()
-    assert roster.get("oscar") is not None
+    assert roster.get("ralph") is not None
     mtime_before = config.ROSTER_FILE.stat().st_mtime_ns
 
     Roster()
     on_disk = json.loads(config.ROSTER_FILE.read_text(encoding="utf-8"))
-    assert sum(1 for r in on_disk if r.get("name") == "oscar") == 1
+    assert sum(1 for r in on_disk if r.get("name") == "ralph") == 1
     assert config.ROSTER_FILE.stat().st_mtime_ns == mtime_before   # файл не переписывался
+
+
+def test_roster_json_with_old_oscar_is_renamed_to_ralph(workspace):
+    """До 25.09.2026 докладчик назывался «Оскар»: старый roster.json переименовывается в Ральфа
+    с портретом и характером из DEFAULT_ROSTER, без дубля."""
+    from app.core import roster as roster_module
+    old = [dict(d) for d in roster_module.DEFAULT_ROSTER if d["name"] != "ralph"]
+    old.append({"name": "oscar", "title": "Оскар · сводки и цифры", "model": "sonnet", "desk": 3,
+                "color": "#39ff88", "avatar": "", "system": "Ты бухгалтер офиса."})
+    roster_module.ROSTER_FILE.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    r = roster_module.Roster()
+    assert "oscar" not in r.agents and "ralph" in r.agents
+    assert r.agents["ralph"].avatar == "ralph.png" and r.agents["ralph"].model == "sonnet"
+    saved = json.loads(roster_module.ROSTER_FILE.read_text(encoding="utf-8"))
+    assert [a["name"] for a in saved].count("ralph") == 1 and not any(a["name"] == "oscar" for a in saved)

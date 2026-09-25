@@ -36,7 +36,7 @@ header .mode.fake { color:var(--warn); border-color:var(--warn) }
 header .mode.busy { color:#4fd8ff; border-color:#4fd8ff; text-shadow:0 0 4px #4fd8ff, 0 0 10px #4fd8ff88; box-shadow:0 0 6px #4fd8ff88, inset 0 0 6px #4fd8ff33; animation:mode-pulse 1.6s ease-in-out infinite }
 @keyframes mode-pulse { 0%,100% { box-shadow:0 0 4px #4fd8ff66, inset 0 0 4px #4fd8ff22 } 50% { box-shadow:0 0 14px #4fd8ffcc, inset 0 0 10px #4fd8ff55 } }
 .notify-bell { position:relative; font-size:16px; padding:5px 10px }
-/* кнопка «Что происходит?» (Оскар): светится его цветом #39ff88, когда собрана новая сводка
+/* кнопка «Что происходит?» (Ральф): светится его цветом #39ff88, когда собрана новая сводка
    (событие digest.ready из /ws или fresh:true при загрузке), гаснет после открытия модалки */
 #btn-digest.fresh { border-color:#39ff88; color:#39ff88; text-shadow:0 0 4px #39ff88, 0 0 10px #39ff88aa;
   box-shadow:3px 3px 0 var(--line), 0 0 8px #39ff88aa, 0 0 18px #39ff8866; animation:digest-glow-pulse 2s ease-in-out infinite }
@@ -238,7 +238,7 @@ pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff
 .answer code { font:12px ui-monospace,Menlo,monospace; background:var(--card); padding:1px 5px }
 .answer pre.code { font:12px/1.4 ui-monospace,Menlo,monospace; background:var(--card); padding:8px; overflow:auto }
 
-/* модалка «Что происходит?» (Оскар): факты по репозиториям + итог с прошлой сводки */
+/* модалка «Что происходит?» (Ральф): факты по репозиториям + итог с прошлой сводки */
 .digest-repos { display:flex; flex-direction:column; gap:12px }
 .digest-repo { background:var(--card); border:2px solid var(--line); padding:8px 12px; box-shadow:3px 3px 0 var(--line) }
 .digest-repo h4 { margin:0 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.5px; display:flex; align-items:center; gap:8px }
@@ -293,8 +293,8 @@ dialog .head .speech { font-size:14px; line-height:1.45; white-space:pre-wrap; m
 dialog .head .speech.error { color:var(--accent) }
 dialog .head .head-person.dwight { --who:#ff9a3c }
 dialog .head .head-person.michael { --who:#4f8cff }
-dialog .head .head-person.oscar { --who:#39ff88 }
-/* Оскар: avatar пуст (нет портрета) — вместо картинки короткий инициал на цветной плашке,
+dialog .head .head-person.ralph { --who:#39ff88 }
+/* Ральф: avatar пуст (нет портрета) — вместо картинки короткий инициал на цветной плашке,
    тот же приём, что и «спрайт без портрета» на этаже (ui/floor.js) для агентов без CHAR_PALETTE */
 dialog .head .head-person .live-portrait.no-avatar { background-image:none; background-color:var(--card);
   display:flex; align-items:center; justify-content:center; font:700 40px "Pixelify Sans", monospace; color:var(--who,#39ff88) }

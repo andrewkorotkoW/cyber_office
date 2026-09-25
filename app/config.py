@@ -54,7 +54,7 @@ PORT = int(os.getenv("AO_PORT", "8600"))
 # Путь к бинарнику Allure CLI (не логируется). Пусто/не найден — просто нет кнопки "Открыть в Allure".
 ALLURE_BIN = os.getenv("AO_ALLURE_BIN", "")
 
-# Сводка «Что происходит?» (Оскар): как часто пересобирать факты и какой моделью
+# Сводка «Что происходит?» (Ральф): как часто пересобирать факты и какой моделью
 # писать текст поверх них (один вызов claude -p, только если факты изменились).
 AO_DIGEST_INTERVAL_MIN = int(os.getenv("AO_DIGEST_INTERVAL_MIN", "15"))
 AO_DIGEST_MODEL = os.getenv("AO_DIGEST_MODEL", "haiku")

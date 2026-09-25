@@ -746,16 +746,16 @@ $('#btn-notify').addEventListener('click', () => { renderNotifyList(); $('#dlg-n
 $('#btn-notify-read-all').addEventListener('click', () => { NOTIFICATIONS.forEach(n => n.read = true); saveNotifications(); renderNotifyList(); });
 renderNotifyBadge();
 
-// ---- сводка «Что происходит?» (Оскар · сводки и цифры): #btn-digest светится по digest.ready/fresh,
+// ---- сводка «Что происходит?» (Ральф · докладчик): #btn-digest светится по digest.ready/fresh,
 // клик — GET /api/digest, показываем модалку, гасим кнопку через POST /api/digest/seen
 function mountDigestPortrait(agent) {
   const el = $('#digest-avatar'); if (!el) return;
-  PORTRAITS.oscar?.stop();
-  PORTRAITS.oscar = null;
+  PORTRAITS.ralph?.stop();
+  PORTRAITS.ralph = null;
   el.classList.remove('no-avatar');
   el.style.backgroundImage = ''; el.textContent = '';
   if (agent && agent.avatar && window.LivePortrait) {
-    PORTRAITS.oscar = window.LivePortrait.mount(el, agent.avatar);
+    PORTRAITS.ralph = window.LivePortrait.mount(el, agent.avatar);
   } else {
     // avatar пуст — плашка с инициалом вместо картинки (см. ui/style.css .no-avatar), как «спрайт
     // без портрета», которым floor.js рисует агентов без собственной палитры (CHAR_PALETTE)
@@ -790,8 +790,8 @@ function renderDigestFacts(facts) {
 function renderDigest(data) {
   const facts = data.facts || {};
   $('#digest-time').textContent = data.generated_at ? '· ' + fmtTime(data.generated_at) : '';
-  mountDigestPortrait(STATE.agents.find(a => a.name === 'oscar'));
-  typeSpeech('oscar', $('#digest-speech'), data.text || 'Оскар молчит: сводка ещё не собрана.', 14);
+  mountDigestPortrait(STATE.agents.find(a => a.name === 'ralph'));
+  typeSpeech('ralph', $('#digest-speech'), data.text || 'Ральф молчит: сводка ещё не собрана.', 14);
   $('#digest-facts').innerHTML = renderDigestFacts(facts);
   $('#digest-facts').querySelectorAll('[data-task-id]').forEach(el => el.addEventListener('click', () => openTask(el.dataset.taskId)));
 }
@@ -807,7 +807,7 @@ $('#btn-digest').addEventListener('click', async () => {
   await markDigestSeen();
 });
 $('#digest-ok').addEventListener('click', () => { $('#dlg-digest').close(); markDigestSeen(); });
-$('#dlg-digest').addEventListener('close', () => { PORTRAITS.oscar?.stop(); SPEECH_TYPING.oscar?.cancel?.(); });
+$('#dlg-digest').addEventListener('close', () => { PORTRAITS.ralph?.stop(); SPEECH_TYPING.ralph?.cancel?.(); });
 $('#digest-refresh').addEventListener('click', async (e) => {
   const btn = e.currentTarget, label = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Обновляю…';
@@ -918,10 +918,10 @@ function connect() {
     else if (ev.kind === 'digest.ready') {
       $('#btn-digest').classList.add('fresh');
       // бэкенд шлёт только «сводка готова» — стадии «идёт сборка» отдельным событием нет, поэтому
-      // «Считаю…» — короткая заглушка на клиенте перед финальной репликой (см. миссию Оскара)
-      Floor.setState('oscar', 'working');
-      Floor.say('oscar', 'Считаю…', 1200);
-      setTimeout(() => { Floor.setState('oscar', 'idle'); Floor.say('oscar', 'Сводка готова', 4000); }, 1200);
+      // «Считаю…» — короткая заглушка на клиенте перед финальной репликой (см. миссию Ральфа)
+      Floor.setState('ralph', 'working');
+      Floor.say('ralph', 'Считаю…', 1200);
+      setTimeout(() => { Floor.setState('ralph', 'idle'); Floor.say('ralph', 'Сводка готова', 4000); }, 1200);
     }
   };
   ws.onclose = () => {

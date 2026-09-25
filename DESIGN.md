@@ -56,8 +56,8 @@ colors:
     pam:
       title: "Пэм · документация"
       color: "#ff4fa3"
-    oscar:
-      title: "Оскар · дайджест «Что происходит?»"
+    ralph:
+      title: "Ральф · дайджест «Что происходит?»"
       color: "#39ff88"
   # палитра статусов задач (ui/app.js STATUS_COLOR + подписи STATUS_RU) — семантика, темой не красится
   status:
@@ -125,8 +125,8 @@ elevation:
   dialog: "8px 8px 0 {colors.arcade.line}"
   # неоновая вывеска в шапке — цвет совпадает с {colors.characters.pam}
   glow: "0 0 3px {colors.characters.pam}, 0 0 8px {colors.characters.pam}aa"
-  # кнопка «Что происходит?» светится цветом Оскара, когда собрана новая сводка
-  glowDigest: "3px 3px 0 {colors.arcade.line}, 0 0 8px {colors.characters.oscar}aa, 0 0 18px {colors.characters.oscar}66"
+  # кнопка «Что происходит?» светится цветом Ральфа, когда собрана новая сводка
+  glowDigest: "3px 3px 0 {colors.arcade.line}, 0 0 8px {colors.characters.ralph}aa, 0 0 18px {colors.characters.ralph}66"
   # критический путь графа миссии — та же розовая вывеска, что в шапке
   glowCritical: "0 0 3px {colors.characters.pam}, 0 0 7px {colors.characters.pam}aa"
   # портрет агента в работе светится его собственным цветом (по умолчанию — {colors.characters.pam})
@@ -171,8 +171,8 @@ cyber_office — пиксельный «офис» ИИ-агентов: этаж
 
 Источники токенов: `ui/style.css` (переменные тем, строки 2–13, и вёрстка компонентов),
 `workspace/roster.json` (цвета персонажей) и `ui/app.js` (`STATUS_COLOR`/`STATUS_RU`, строки 10–11).
-Оскар — не агент-исполнитель из `roster.json` (он вне диспетчера задач), его цвет `#39ff88` взят
-из `ui/style.css` (`.head-person.oscar`, дайджест «Что происходит?»).
+Ральф — не агент-исполнитель из `roster.json` (он вне диспетчера задач), его цвет `#39ff88` взят
+из `ui/style.css` (`.head-person.ralph`, дайджест «Что происходит?»).
 
 ## Colors
 
@@ -186,7 +186,7 @@ cyber_office — пиксельный «офис» ИИ-агентов: этаж
   это цвета поверхности темы, а не статуса.
   Актуальный цвет status-pill.
 - **Цвета персонажей — фирменный неон, а не тема.** `{colors.characters.*}` (michael `#4f8cff`,
-  dwight `#ff9a3c`, pam `#ff4fa3`, oscar `#39ff88`) красят портрет, подпись и реплику в диалогах
+  dwight `#ff9a3c`, pam `#ff4fa3`, ralph `#39ff88`) красят портрет, подпись и реплику в диалогах
   и на доске — независимо от активной темы приложения.
 - **Розовая вывеска — общий неоновый акцент.** `#ff4fa3` (= `{colors.characters.pam}`) используется
   не только у Пэм: та же вывеска в шапке (`header h1.neon`) и критический путь графа миссии

@@ -475,7 +475,7 @@ class Office:
         await bus.emit("agent.state", lead.name, None, state="planning")
         await bus.emit("agent.text", lead.name, None, text=f"Планирую миссию: {m.goal[:120]}")
         try:
-            # Оскар не берёт задачи — не предлагаем его планировщику ни в команде, ни как
+            # Ральф не берёт задачи — не предлагаем его планировщику ни в команде, ни как
             # допустимого исполнителя (parse_plan проверяет agent по ключам team)
             team = {a.name: a.title for a in self.roster.agents.values() if a.name not in NON_WORKER_AGENTS}
             plan = await self.planner.plan(m.goal, m.repo, team)
