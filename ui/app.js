@@ -26,7 +26,7 @@ function md(text) {
 }
 const summary = (text, n = 150) => { const t = String(text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n).trim() + '…' : t; };
 const MAX_AUTO_RETRIES = 3;
-const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } };
+const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); } catch (e) { return iso; } };
 const fmtTimeSec = (ts) => { try { return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); } catch (e) { return ''; } };
 const costLabel = (usd) => usd ? ` · ≈$${usd.toFixed(2)} по API` : '';
 const agentTitle = (n) => (STATE.agents.find(a => a.name === n) || { title: n }).title.split('·')[0].trim();
@@ -286,7 +286,7 @@ function renderMissionGraph(tasks, missionStatus) {
     if (missionStatus === 'active') {
       const remaining = critPath.reduce((s, id) => s + remainingMinutes(byId.get(id), estimate), 0);
       const eta = new Date(Date.now() + remaining * 60000);
-      caption += ` · ожидаемое окончание ~${eta.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      caption += ` · ожидаемое окончание ~${fmtTime(eta.toISOString())}`;
     }
   }
   return `<div class="mission-graph"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges}${nodesHtml}</svg></div>
@@ -763,6 +763,36 @@ function mountDigestPortrait(agent) {
     el.textContent = ((agent && agent.title) || 'О').trim().charAt(0);
   }
 }
+// репозиторий «тихий» — ни миссий, ни задач (running/review/todo), ни падений за 24ч, ни паузы;
+// такие сворачиваются в одну строку вместо блока (см. splitDigestRepos ниже), чистая функция — тестируется без DOM
+function isDigestRepoQuiet(repo) {
+  return !(repo.missions && repo.missions.length) && !(repo.running && repo.running.length) &&
+    !(repo.review && repo.review.length) && !(repo.todo && repo.todo.length) &&
+    !(repo.failed_24h && repo.failed_24h.length) && !repo.paused;
+}
+// делит репозитории сводки на активные (что-то происходит — показываем блоками) и тихие (сворачиваем
+// в одну строку); порядок внутри групп — как пришло от бэкенда, активные группой идут первыми
+function splitDigestRepos(repos) {
+  const active = [], quiet = [];
+  for (const r of repos) (isDigestRepoQuiet(r) ? quiet : active).push(r);
+  return { active, quiet };
+}
+function digestFailedItemHtml(t) {
+  return `<div class="digest-item digest-failed" data-digest-task-row="${esc(t.id)}">
+    <span class="digest-clickable" data-task-id="${esc(t.id)}">❌ ${esc(t.title)}${t.error ? ' — ' + esc(t.error) : ''}</span>
+    <button class="small" data-digest-retry="${esc(t.id)}">Повторить</button>
+  </div>`;
+}
+// строка задачи из блока «упало за 24ч» после task.updated (повтор запущен/дошёл до ревью/готов/упал
+// снова) — используется и для живого обновления одной строки (updateDigestTaskRow), и переиспользует
+// digestFailedItemHtml, если задача опять failed
+function digestTaskRowHtml(t) {
+  if (t.status === 'todo') return `<div class="digest-item" data-digest-task-row="${esc(t.id)}">⏳ ${esc(t.title)} — в очереди на повтор</div>`;
+  if (t.status === 'running') return `<div class="digest-item" data-digest-task-row="${esc(t.id)}">🔁 ${esc(agentTitle(t.agent))}: ${esc(t.title)} — повторяется…</div>`;
+  if (t.status === 'review') return `<div class="digest-item digest-clickable" data-task-id="${esc(t.id)}" data-digest-task-row="${esc(t.id)}">📝 ${esc(agentTitle(t.agent))}: ${esc(t.title)}</div>`;
+  if (t.status === 'done') return `<div class="digest-item" data-digest-task-row="${esc(t.id)}">✅ ${esc(t.title)}</div>`;
+  return digestFailedItemHtml(t);
+}
 function renderDigestRepo(repo) {
   const missions = (repo.missions || []).map(m => `<div class="digest-mission"><div class="t">${esc(m.goal)}</div>
       <div class="bar"><i style="width:${m.total ? Math.round(m.done / m.total * 100) : 0}%"></i></div>
@@ -770,7 +800,7 @@ function renderDigestRepo(repo) {
   const running = (repo.running || []).map(t => `<div class="digest-item">🛠 ${esc(agentTitle(t.agent))}: ${esc(t.title)}</div>`).join('');
   const review = (repo.review || []).map(t => `<div class="digest-item digest-clickable" data-task-id="${esc(t.id)}">📝 ${esc(agentTitle(t.agent))}: ${esc(t.title)}</div>`).join('');
   const todo = (repo.todo || []).map(t => `<div class="digest-item">⏳ ${esc(t.title)}</div>`).join('');
-  const failed = (repo.failed_24h || []).map(t => `<div class="digest-item digest-failed">❌ ${esc(t.title)}${t.error ? ' — ' + esc(t.error) : ''}</div>`).join('');
+  const failed = (repo.failed_24h || []).map(digestFailedItemHtml).join('');
   const testhub = repo.testhub ? `<div class="digest-testhub">🧪 test_hub: ${repo.testhub.passed || 0} прошло / ${repo.testhub.failed || 0} упало${repo.testhub.stand ? ' · ' + esc(repo.testhub.stand) : ''}</div>` : '';
   const paused = repo.paused ? '<span class="tag" style="color:var(--warn);border-color:var(--warn)">⏸ на паузе</span>' : '';
   const empty = !missions && !running && !review && !todo && !failed ? '<div class="log">Тихо.</div>' : '';
@@ -779,7 +809,14 @@ function renderDigestRepo(repo) {
 function renderDigestFacts(facts) {
   const repos = Object.values(facts.repos || {});
   const since = facts.since_last || {};
-  const repoHtml = repos.length ? repos.map(renderDigestRepo).join('') : '<div class="log">Пока нет данных по репозиториям.</div>';
+  let repoHtml;
+  if (!repos.length) {
+    repoHtml = '<div class="log">Пока нет данных по репозиториям.</div>';
+  } else {
+    const { active, quiet } = splitDigestRepos(repos);
+    const quietHtml = quiet.length ? `<div class="digest-repo digest-repo-quiet">${quiet.map(r => esc(r.name)).join(' · ')} — тихо</div>` : '';
+    repoHtml = active.map(renderDigestRepo).join('') + quietHtml;
+  }
   const sinceHtml = `<div class="digest-since"><label>С прошлой сводки</label>
     <span class="tag">✅ сдано: ${since.done_tasks || 0}</span>
     <span class="tag">🎯 миссий: ${since.done_missions || 0}</span>
@@ -787,13 +824,34 @@ function renderDigestFacts(facts) {
     ${since.cost_usd ? `<span class="tag">≈$${since.cost_usd.toFixed(2)} по API</span>` : ''}</div>`;
   return `<div class="digest-repos">${repoHtml}</div>${sinceHtml}`;
 }
+// сам root тоже может нести data-task-id/data-digest-retry (не только его потомки) — например,
+// строка review-статуса после повтора вешает data-task-id на себя же, а не на вложенный элемент
+function bindDigestTaskRowActions(root) {
+  const all = (sel) => { const list = [...root.querySelectorAll(sel)]; if (root.matches && root.matches(sel)) list.unshift(root); return list; };
+  all('[data-task-id]').forEach(el => el.addEventListener('click', () => openTask(el.dataset.taskId)));
+  all('[data-digest-retry]').forEach(el => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const t = STATE.tasks.find(x => x.id === el.dataset.digestRetry);
+    if (t) action(t, 'retry');
+  }));
+}
+// живое обновление одной строки «упавшей задачи» по task.updated (см. ws.onmessage) — без перезапроса
+// /api/digest, который вернул бы старый кэш; ничего не делает, если строки уже нет в открытой модалке
+function updateDigestTaskRow(t) {
+  const row = document.querySelector(`#digest-facts [data-digest-task-row="${t.id}"]`);
+  if (!row) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = digestTaskRowHtml(t).trim();
+  const fresh = tmp.firstElementChild;
+  row.replaceWith(fresh);
+  bindDigestTaskRowActions(fresh);
+}
 function renderDigest(data) {
   const facts = data.facts || {};
   $('#digest-time').textContent = data.generated_at ? '· ' + fmtTime(data.generated_at) : '';
   mountDigestPortrait(STATE.agents.find(a => a.name === 'ralph'));
   typeSpeech('ralph', $('#digest-speech'), data.text || 'Ральф молчит: сводка ещё не собрана.', 14);
   $('#digest-facts').innerHTML = renderDigestFacts(facts);
-  $('#digest-facts').querySelectorAll('[data-task-id]').forEach(el => el.addEventListener('click', () => openTask(el.dataset.taskId)));
+  bindDigestTaskRowActions($('#digest-facts'));
 }
 async function markDigestSeen() {
   $('#btn-digest').classList.remove('fresh');
@@ -884,6 +942,7 @@ function connect() {
       termLine('state', who, `→ ${STATUS_RU[t.status]}: ${t.title}`, ev.agent, t.repo);
       if ((t.status === 'review' || t.status === 'failed') && t.result) termLine('text', who, '💬 ' + summary(t.result, 400), ev.agent, t.repo);
       if (['review', 'failed', 'done'].includes(t.status)) pushNotification(`${STATUS_RU[t.status]}: ${t.title}`);
+      if ($('#dlg-digest').open) updateDigestTaskRow(t);
       loadPlanerkaSummary();
       loadState();
     }
