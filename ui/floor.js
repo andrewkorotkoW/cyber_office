@@ -43,13 +43,16 @@
     rb(['.', 5], ['s', 6], ['.', 5]), // шея
   ];
 
-  // ---------------------------------------------------------------- именные персонажи (michael/dwight/pam)
-  // три агента получают собственный силуэт/палитру вместо процедурной причёски — по описаниям cyberpunk-портретов
+  // ---------------------------------------------------------------- именные персонажи (michael/dwight/pam/ralph)
+  // четыре агента получают собственный силуэт/палитру вместо процедурной причёски — по описаниям cyberpunk-портретов
   // (ui/assets/portraits/*.png). Для незнакомых имён используется прежний генератор (HAIRSTYLES/FACE_ROWS выше).
   const CHAR_PALETTE = {
     michael: { skin: P.s, hair: '#2e2013', eye: '#4fa8ff', jacket: '#1d3a66', neon: '#7ec8ff' },
     dwight: { skin: '#dfe4ec', hair: '#dfe4ec', eye: '#ffd23f', jacket: '#c9cfd8', neon: '#3fe0c8', emblem: '#f2c14e' },
     pam: { skin: P.s, hair: '#ff4fa3', eye: '#3fe0c8', jacket: '#15161d', neon: '#3fe0c8', shoulder: '#ff4fa3' },
+    // корги-докладчик: рыжая шерсть (hair) на ушах/щеках, кремово-белая (skin/jacket) на морде и теле —
+    // portrait ui/assets/portraits/ralph.png того же рыже-белого окраса
+    ralph: { skin: '#f6e2c4', hair: '#c9772f', eye: '#3a2712', jacket: '#f5ead9' },
   };
   const CHAR_HAIRSTYLES = {
     michael: [ // длинные тёмно-каштановые волосы, зачёсаны назад — закрывают весь верх головы
@@ -66,6 +69,12 @@
       rb(['.', 3], ['h', 8], ['.', 5]),
       rb(['.', 2], ['h', 9], ['s', 1], ['.', 4]),
       rb(['.', 1], ['h', 10], ['s', 2], ['.', 3]),
+    ],
+    ralph: [ // стоячие остроконечные уши корги: узкие рыжие кончики сверху, у основания шире с белой
+      // внутренней стороной ('w' — не входит в CHAR_PALETTE, берётся из общей палитры P как обычный белый)
+      rb(['.', 2], ['h', 1], ['.', 10], ['h', 1], ['.', 2]),
+      rb(['.', 1], ['h', 2], ['.', 9], ['h', 2], ['.', 2]),
+      rb(['h', 2], ['w', 1], ['.', 10], ['w', 1], ['h', 2]),
     ],
   };
   // общие лицевые ряды для именных персонажей — глаза получают отдельный цветовой код 'z' (голубой/жёлтый/бирюзовый),
@@ -84,6 +93,7 @@
     michael: CHAR_HAIRSTYLES.michael.concat(MICHAEL_FACE_ROWS),
     dwight: CHAR_HAIRSTYLES.dwight.concat(CHAR_FACE_ROWS),
     pam: CHAR_HAIRSTYLES.pam.concat(CHAR_FACE_ROWS),
+    ralph: CHAR_HAIRSTYLES.ralph.concat(CHAR_FACE_ROWS),
   };
   function characterFor(name) { return Object.prototype.hasOwnProperty.call(CHAR_PALETTE, name) ? name : null; }
   // торс: f — рубашка (цвет агента), e — рукав (темнее), s — кисти рук

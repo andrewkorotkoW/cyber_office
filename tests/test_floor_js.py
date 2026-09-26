@@ -71,27 +71,41 @@ def test_named_agents_get_their_own_character():
           michael: F.characterFor('michael'),
           dwight: F.characterFor('dwight'),
           pam: F.characterFor('pam'),
+          ralph: F.characterFor('ralph'),
           unknown: F.characterFor('someone_else'),
         }}));
     """)
-    assert out == {"michael": "michael", "dwight": "dwight", "pam": "pam", "unknown": None}
+    assert out == {"michael": "michael", "dwight": "dwight", "pam": "pam", "ralph": "ralph", "unknown": None}
 
 
 def test_char_heads_are_distinct_and_well_formed():
     out = _run_node(f"""
         const F = require({json.dumps(str(FLOOR_JS))});
         const heads = {{}};
-        for (const name of ['michael', 'dwight', 'pam']) {{
+        for (const name of ['michael', 'dwight', 'pam', 'ralph']) {{
           const rows = F.CHAR_HEADS[name];
           heads[name] = {{ rowCount: rows.length, widths: [...new Set(rows.map(r => r.length))], joined: rows.join('|') }};
         }}
         console.log(JSON.stringify(heads));
     """)
-    for name in ("michael", "dwight", "pam"):
+    for name in ("michael", "dwight", "pam", "ralph"):
         assert out[name]["rowCount"] == 8
         assert out[name]["widths"] == [16]     # каждая строка спрайта ровно 16 «пикселей» — без этого рисунок рассыпается
-    # три силуэта не совпадают (иначе разные образы выглядели бы одинаково)
-    assert len({out[n]["joined"] for n in ("michael", "dwight", "pam")}) == 3
+    # силуэты не совпадают друг с другом (иначе разные образы выглядели бы одинаково)
+    assert len({out[n]["joined"] for n in ("michael", "dwight", "pam", "ralph")}) == 4
+
+
+def test_ralph_gets_a_corgi_sprite_same_scale_as_others():
+    """Пункт 5 миссии (26.09): Ральф — рыже-белый корги со стоячими ушами, той же ширины/раскладки
+    спрайта (16 «пикселей», 8 строк головы), что и у остальных именных персонажей."""
+    out = _run_node(f"""
+        const F = require({json.dumps(str(FLOOR_JS))});
+        console.log(JSON.stringify({{ palette: F.CHAR_PALETTE.ralph, head: F.CHAR_HEADS.ralph }}));
+    """)
+    assert out["palette"]["hair"] and out["palette"]["skin"]   # рыжая шерсть + светлая морда/тело — обе краски заданы
+    ears_rows = out["head"][:3]
+    assert any("h" in row for row in ears_rows)                # уши нарисованы (не пустая полоса)
+    assert all(len(row) == 16 for row in out["head"])
 
 
 # Выбор позы по a.state живёт внутри drawHuman() (не экспортируется — использует canvas o.*, что

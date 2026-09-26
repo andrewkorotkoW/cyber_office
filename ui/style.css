@@ -248,12 +248,16 @@ pre.diff .add { color:var(--ok) } pre.diff .del { color:var(--accent) } pre.diff
 .digest-mission .bar i { display:block; height:100%; background:var(--ok) }
 .digest-mission .m { color:var(--mute); font-size:11.5px; margin-top:2px }
 .digest-item { padding:3px 0; font-size:12.5px }
-.digest-item.digest-clickable { cursor:pointer; color:var(--blue) }
-.digest-item.digest-clickable:hover { text-decoration:underline }
-.digest-item.digest-failed { color:var(--accent) }
+.digest-clickable { cursor:pointer; color:var(--blue) }
+.digest-clickable:hover { text-decoration:underline }
+.digest-item.digest-failed { color:var(--accent); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap }
+.digest-item.digest-failed .digest-clickable { color:var(--accent) }
 .digest-testhub { margin-top:4px; font-size:12.5px; color:var(--mute) }
 .digest-since { margin-top:14px; padding-top:10px; border-top:2px dashed var(--line); display:flex; align-items:center; gap:8px; flex-wrap:wrap }
 .digest-since label { margin:0; flex:none }
+/* репозитории без миссий/задач/падений/пауз — одной приглушённой строкой вместо блока (см.
+   splitDigestRepos в ui/app.js), активные блоки всегда идут перед этой строкой */
+.digest-repo.digest-repo-quiet { background:none; border:1px dashed var(--line); box-shadow:none; padding:6px 12px; color:var(--mute); font-size:12.5px }
 ::-webkit-scrollbar { width:10px; height:10px } ::-webkit-scrollbar-thumb { background:var(--line) } ::-webkit-scrollbar-track { background:var(--bg) }
 
 .term { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--bg); border:2px solid var(--line); padding:8px 10px; max-height:32vh; overflow:auto; white-space:pre-wrap }
@@ -289,7 +293,9 @@ dialog .head .head-person { display:flex; align-items:flex-start; gap:10px; flex
 dialog .head .head-person img, dialog .head .head-person .live-portrait { width:96px; height:96px; image-rendering:pixelated; border:3px solid var(--who,#ff4fa3); box-shadow:0 0 10px var(--who,#ff4fa3); flex:none }
 dialog .head .head-person-text { flex:1; min-width:0 }
 dialog .head .head-person .who { color:var(--who,#ff4fa3); font-size:12px; letter-spacing:1px; text-transform:uppercase; text-shadow:0 0 6px var(--who,#ff4fa3) }
-dialog .head .speech { font-size:14px; line-height:1.45; white-space:pre-wrap; min-height:1.45em; margin-top:4px }
+/* текст сводки Ральфа показывается целиком — без ограничения высоты, просто переносится
+   (никакого max-height/line-clamp: длинные слова тоже переносятся, чтобы не было горизонтального обреза) */
+dialog .head .speech { font-size:14px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; min-height:1.45em; margin-top:4px }
 dialog .head .speech.error { color:var(--accent) }
 dialog .head .head-person.dwight { --who:#ff9a3c }
 dialog .head .head-person.michael { --who:#4f8cff }
