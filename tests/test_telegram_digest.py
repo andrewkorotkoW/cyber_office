@@ -1,6 +1,8 @@
 """Telegram-мост: свежая сводка Ральфа по /digest и по тексту «что происходит?»,
 форматирование сообщения (время 24ч, текст Ральфа, факты, тихие репозитории, test_hub,
-обрезка до 3500 символов) и фоновый цикл автосводки (AO_TG_DIGEST_MIN/AO_TG_DIGEST_QUIET).
+обрезка до 3500 символов), портрет Ральфа в сводках (send_photo, caption vs отдельное
+сообщение по лимиту 1024, кэш file_id) и фоновый цикл автосводки
+(AO_TG_DIGEST_MIN/AO_TG_DIGEST_QUIET).
 Весь Telegram замокан — реальной сети нет (см. tests/test_telegram_infra_notify.py и соседей)."""
 from __future__ import annotations
 
@@ -44,10 +46,14 @@ class FakeSentMessage:
         self.initial_text = text
         self.text = text
         self.edits: list[tuple[str, dict]] = []
+        self.deleted = False
 
     async def edit_text(self, text: str, **kw) -> None:
         self.edits.append((text, kw))
         self.text = text
+
+    async def delete(self) -> None:
+        self.deleted = True
 
 
 class FakeMessage:
@@ -62,12 +68,29 @@ class FakeMessage:
         return m
 
 
+class FakePhotoSize:
+    def __init__(self, file_id: str) -> None:
+        self.file_id = file_id
+
+
+class FakeSentPhoto:
+    """Ответ bot.send_photo(): aiogram отдаёт Message с photo[-1].file_id — по нему кэшируем."""
+
+    def __init__(self, file_id: str = "remote-file-id-123") -> None:
+        self.photo = [FakePhotoSize(file_id)]
+
+
 class FakeBot:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, dict]] = []
+        self.photos: list[tuple[int, object, dict]] = []
 
     async def send_message(self, uid, text, **kw):
         self.sent.append((uid, text, kw))
+
+    async def send_photo(self, uid, photo, **kw):
+        self.photos.append((uid, photo, kw))
+        return FakeSentPhoto()
 
 
 class FakeRoster:
@@ -135,15 +158,21 @@ def _facts_huge() -> dict:
 
 
 @pytest.fixture
-def tg_env(monkeypatch):
+def tg_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "TG_ADMINS", {111})
     tg._office = FakeOffice()
     tg._pending_reason.clear()
     tg._pending_newrepo.clear()
-    yield
+    tg._ralph_photo_file_id = None
+    portraits = tmp_path / "portraits"
+    portraits.mkdir()
+    (portraits / "ralph.png").write_bytes(b"fake-portrait")
+    monkeypatch.setattr(tg, "PORTRAITS_DIR", portraits)
+    yield portraits
     tg._office = None
     tg._pending_reason.clear()
     tg._pending_newrepo.clear()
+    tg._ralph_photo_file_id = None
 
 
 @pytest.fixture
@@ -208,9 +237,83 @@ def test_format_digest_message_truncates_to_3500_with_marker(tg_env):
     assert text.endswith("(обрезано)")
 
 
+# ------------------------------------------------------------------ портрет Ральфа в сводках
+
+async def test_deliver_digest_uses_single_photo_with_caption_when_text_fits(tg_env, monkeypatch):
+    bot = FakeBot()
+    tg._bot = bot
+    data = _data()                                  # короткая сводка — укладывается в лимит подписи (1024)
+    text = tg._format_digest_message(data)
+    assert len(text) <= tg.DIGEST_CAPTION_MAX
+
+    await tg._deliver_digest([111], data, kb=None)
+
+    assert len(bot.photos) == 1
+    assert bot.sent == []                            # отдельного текстового сообщения не было
+    uid, photo, kw = bot.photos[0]
+    assert uid == 111
+    assert kw.get("caption") == text
+    assert kw.get("parse_mode") == "HTML"
+
+
+async def test_deliver_digest_sends_short_header_photo_plus_full_text_when_too_long(tg_env):
+    bot = FakeBot()
+    tg._bot = bot
+    data = _data(facts=_facts_huge(), text="Ральф очень занят сегодня")
+    text = tg._format_digest_message(data)
+    assert len(text) > tg.DIGEST_CAPTION_MAX
+
+    kb = object()
+    await tg._deliver_digest([111], data, kb=kb)
+
+    assert len(bot.photos) == 1
+    _uid, _photo, photo_kw = bot.photos[0]
+    caption = photo_kw.get("caption")
+    assert "Ральф" in caption and "сводка" in caption and "23:15" in caption
+    assert len(caption) < 100                        # короткая шапка, не вся сводка
+
+    assert len(bot.sent) == 1                         # полный текст — отдельным сообщением
+    _uid2, sent_text, sent_kw = bot.sent[0]
+    assert sent_text == text
+    assert sent_kw.get("reply_markup") is kb          # кнопки на текстовом сообщении, как раньше
+
+
+async def test_deliver_digest_caches_file_id_and_reuses_it(tg_env):
+    bot = FakeBot()
+    tg._bot = bot
+    assert tg._ralph_photo_file_id is None
+
+    await tg._deliver_digest([111], _data(fingerprint="fp1"), kb=None)
+    _uid, first_photo, _kw = bot.photos[0]
+    from aiogram.types import FSInputFile
+    assert isinstance(first_photo, FSInputFile)       # первый раз — файлом
+    assert tg._ralph_photo_file_id == "remote-file-id-123"
+
+    await tg._deliver_digest([111], _data(fingerprint="fp2"), kb=None)
+    _uid2, second_photo, _kw2 = bot.photos[1]
+    assert second_photo == "remote-file-id-123"        # второй раз — по кэшированному file_id, не файлом
+
+
+async def test_deliver_digest_falls_back_to_plain_text_without_portrait_file(tg_env):
+    import shutil
+    shutil.rmtree(tg.PORTRAITS_DIR)
+    bot = FakeBot()
+    tg._bot = bot
+    data = _data()
+    text = tg._format_digest_message(data)
+
+    await tg._deliver_digest([111], data, kb=None)
+
+    assert bot.photos == []
+    assert len(bot.sent) == 1
+    uid, sent_text, kw = bot.sent[0]
+    assert uid == 111 and sent_text == text and kw.get("parse_mode") == "HTML"
+
+
 # ------------------------------------------------------------------ /digest и текстовый триггер
 
-async def test_digest_command_shows_placeholder_then_refreshed_digest(tg_env):
+async def test_digest_command_shows_placeholder_then_photo_with_caption(tg_env):
+    tg._bot = FakeBot()
     tg._digest_scheduler = FakeScheduler(_data())
     msg = FakeMessage(111, "/digest")
 
@@ -218,14 +321,19 @@ async def test_digest_command_shows_placeholder_then_refreshed_digest(tg_env):
 
     assert tg._digest_scheduler.calls == 1
     assert len(msg.sent) == 1
-    sent = msg.sent[0]
-    assert sent.initial_text == "🐾 Ральф думает…"
-    assert len(sent.edits) == 1
-    final_text, kw = sent.edits[0]
+    placeholder = msg.sent[0]
+    assert placeholder.initial_text == "🐾 Ральф думает…"
+    assert placeholder.edits == []
+    assert placeholder.deleted is True                # плейсхолдер убран, а не превращён в фото
+
+    assert len(tg._bot.photos) == 1
+    uid, _photo, kw = tg._bot.photos[0]
+    assert uid == 111
     assert kw.get("parse_mode") == "HTML"
     assert kw.get("reply_markup") is not None
-    assert "23:15" in final_text
-    assert "Ральф говорит по фактам" in final_text
+    assert "23:15" in kw.get("caption")
+    assert "Ральф говорит по фактам" in kw.get("caption")
+    tg._bot = None
 
 
 @pytest.mark.parametrize("phrase", [
@@ -235,6 +343,7 @@ async def test_digest_command_shows_placeholder_then_refreshed_digest(tg_env):
     "Что ПРОИСХОДИТ???",
 ])
 async def test_chto_proishodit_text_variants_trigger_refresh(tg_env, phrase):
+    tg._bot = FakeBot()
     tg._digest_scheduler = FakeScheduler(_data())
     msg = FakeMessage(111, phrase)
 
@@ -243,11 +352,14 @@ async def test_chto_proishodit_text_variants_trigger_refresh(tg_env, phrase):
     assert tg._digest_scheduler.calls == 1
     assert len(msg.sent) == 1
     assert msg.sent[0].initial_text == "🐾 Ральф думает…"
-    final_text, kw = msg.sent[0].edits[0]
-    assert "23:15" in final_text
+    assert msg.sent[0].deleted is True
+    assert len(tg._bot.photos) == 1
+    assert "23:15" in tg._bot.photos[0][2].get("caption")
+    tg._bot = None
 
 
 async def test_digest_command_no_changes_shows_one_line_without_full_text(tg_env):
+    tg._bot = FakeBot()
     tg._digest_scheduler = FakeScheduler(_data(changed=False, generated_at="2026-09-29T10:05:00"))
     msg = FakeMessage(111, "/digest")
 
@@ -260,6 +372,9 @@ async def test_digest_command_no_changes_shows_one_line_without_full_text(tg_env
     assert final_text == "Без изменений с 10:05"
     assert kw == {}                             # без parse_mode/клавиатуры — это не полная сводка
     assert "proj_a" not in final_text
+    assert sent.deleted is False                # «без изменений» правит плейсхолдер, не удаляет
+    assert tg._bot.photos == []                 # и без фото, чтобы не спамить картинками
+    tg._bot = None
 
 
 # ------------------------------------------------------------------ фоновый цикл автосводки
@@ -272,6 +387,7 @@ async def test_broadcast_loop_disabled_when_interval_is_zero(broadcast_env, monk
 
     assert tg._digest_scheduler.calls == 0
     assert broadcast_env.sent == []
+    assert broadcast_env.photos == []
 
 
 async def test_broadcast_loop_sends_after_interval_not_immediately(broadcast_env, monkeypatch):
@@ -281,8 +397,8 @@ async def test_broadcast_loop_sends_after_interval_not_immediately(broadcast_env
     task = asyncio.create_task(tg._digest_broadcast_loop())
     try:
         await asyncio.sleep(0)                      # первая же итерация ещё спит — отправки быть не должно
-        assert broadcast_env.sent == []
-        assert await _wait(lambda: len(broadcast_env.sent) >= 1, timeout=3)
+        assert broadcast_env.photos == []
+        assert await _wait(lambda: len(broadcast_env.photos) >= 1, timeout=3)
         assert tg._digest_scheduler.calls == 1
     finally:
         await _cancel(task)
@@ -294,17 +410,19 @@ async def test_tick_broadcast_quiet_mode_silent_on_same_fingerprint_until_hour_p
     monkeypatch.setattr(config, "AO_TG_DIGEST_QUIET", True)
     tg._digest_scheduler = FakeScheduler(_data(fingerprint="fp1"))
 
-    await tg._tick_broadcast()                      # первый тик — fingerprint новый, шлём полную сводку
-    assert len(broadcast_env.sent) == 1
-    assert "proj_a" in broadcast_env.sent[0][1]
+    await tg._tick_broadcast()                      # первый тик — fingerprint новый, шлём полную сводку (фото)
+    assert len(broadcast_env.photos) == 1
+    assert "proj_a" in broadcast_env.photos[0][2].get("caption")
 
     await tg._tick_broadcast()                      # тот же fingerprint, час не прошёл — молчим
-    assert len(broadcast_env.sent) == 1
+    assert len(broadcast_env.photos) == 1
+    assert broadcast_env.sent == []
 
     from datetime import datetime, timedelta
     tg._last_sent_at = datetime.now() - timedelta(hours=1, minutes=1)
-    await tg._tick_broadcast()                      # тот же fingerprint, час прошёл — короткая строка
-    assert len(broadcast_env.sent) == 2
+    await tg._tick_broadcast()                      # тот же fingerprint, час прошёл — короткая строка, без фото
+    assert len(broadcast_env.photos) == 1            # фото не добавилось
+    assert len(broadcast_env.sent) == 1
     last_text = broadcast_env.sent[-1][1]
     assert "час" in last_text.lower()
     assert "proj_a" not in last_text                # не полная сводка, а именно короткая строка
@@ -318,9 +436,14 @@ async def test_tick_broadcast_quiet_mode_false_sends_full_digest_every_tick(broa
     await tg._tick_broadcast()
     await tg._tick_broadcast()
 
-    assert len(broadcast_env.sent) == 3
-    for _uid, text, _kw in broadcast_env.sent:
-        assert "proj_a" in text                      # каждый раз полная сводка, а не короткая строка
+    assert len(broadcast_env.photos) == 3
+    for _uid, _photo, kw in broadcast_env.photos:
+        assert "proj_a" in kw.get("caption")          # каждый раз полная сводка, а не короткая строка
+
+    from aiogram.types import FSInputFile
+    assert isinstance(broadcast_env.photos[0][1], FSInputFile)   # первый раз файлом
+    assert broadcast_env.photos[1][1] == "remote-file-id-123"    # дальше — по кэшированному file_id
+    assert broadcast_env.photos[2][1] == "remote-file-id-123"
 
 
 async def test_tick_broadcast_sends_full_digest_when_fingerprint_changes(broadcast_env, monkeypatch):
@@ -330,6 +453,6 @@ async def test_tick_broadcast_sends_full_digest_when_fingerprint_changes(broadca
     await tg._tick_broadcast()
     await tg._tick_broadcast()
 
-    assert len(broadcast_env.sent) == 2               # разный fingerprint — тихий режим не глушит
-    for _uid, text, _kw in broadcast_env.sent:
-        assert "proj_a" in text
+    assert len(broadcast_env.photos) == 2               # разный fingerprint — тихий режим не глушит
+    for _uid, _photo, kw in broadcast_env.photos:
+        assert "proj_a" in kw.get("caption")
