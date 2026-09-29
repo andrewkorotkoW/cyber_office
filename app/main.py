@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
     digest_scheduler.start()
     if config.TG_TOKEN and config.TG_ADMINS:
         from app import telegram
-        asyncio.create_task(telegram.run(office, _repos, _after_merge_cmd, _register_repo))
+        asyncio.create_task(telegram.run(office, digest_scheduler, _repos, _after_merge_cmd, _register_repo))
     elif config.TG_TOKEN:
         log.warning("AO_TG_TOKEN задан, но AO_TG_ADMINS пуст — мост выключен: некому доверять")
     try:

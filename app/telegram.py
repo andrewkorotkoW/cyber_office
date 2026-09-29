@@ -21,6 +21,8 @@ import asyncio
 import html
 import logging
 import re
+from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -38,6 +40,7 @@ import json
 
 _office: Office | None = None
 _bot: Bot | None = None
+_digest_scheduler = None
 _repos_fn = None
 _after_merge_cmd_fn = None
 _register_repo_fn = None
@@ -48,6 +51,13 @@ _pending_task: dict[int, tuple[str, str]] = {}   # tg_id -> (agent, text): за�
 _pending_newrepo: set[int] = set()         # tg_id -> следующим текстом ждём "имя [описание]" нового проекта
 _portrait_sent: set[str] = set()           # id задач, для которых уже отправляли фото-портрет агента
 PORTRAITS_DIR = config.ROOT / "ui" / "assets" / "portraits"
+
+DIGEST_MAX_LEN = 3500
+TESTHUB_BASE_URL = "http://127.0.0.1:8700"
+# автосводка: отпечаток/время ПОСЛЕДНЕЙ ОТПРАВКИ в чат (не путать с fingerprint внутри
+# DigestScheduler — тот про последний пересбор, а не про то, что реально ушло в Telegram)
+_last_sent_fingerprint: str | None = None
+_last_sent_at: datetime | None = None
 
 
 def _load_prefs() -> None:
@@ -251,41 +261,114 @@ async def status(message: Message) -> None:
 async def digest_cmd(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
-    from app.core import digest
-    cache = digest.load_cache()
-    if cache is None:
-        await message.answer("Ральф молчит: сводка ещё не собиралась."); return
-    text = cache.get("text")
-    if text:
-        await message.answer(f"🧮 <b>Ральф:</b>\n{ESC(text)}", parse_mode="HTML")
-        return
-    reason = cache.get("error") or "не запускался"
-    await message.answer(f"Ральф молчит: {ESC(reason)}\n\n{_facts_summary(cache.get('facts') or {})}",
-                         parse_mode="HTML")
+    await _send_fresh_digest(message)
 
 
-def _facts_summary(facts: dict) -> str:
-    lines = []
+def _fmt_time(iso: str | None) -> str:
+    if not iso:
+        return "?"
+    try:
+        return datetime.fromisoformat(iso).strftime("%H:%M")
+    except ValueError:
+        return "?"
+
+
+def _repo_quiet(bucket: dict) -> bool:
+    """Тот же критерий «тихого» репозитория, что и в ui/app.js::isDigestRepoQuiet."""
+    return not (bucket.get("missions") or bucket.get("running") or bucket.get("review")
+                or bucket.get("todo") or bucket.get("failed_24h") or bucket.get("paused"))
+
+
+def _testhub_line(repo_name: str, run: dict) -> str:
+    passed, failed = run.get("passed") or 0, run.get("failed") or 0
+    verdict = "❌ упал" if failed else "✅ прошёл"
+    link = f"{TESTHUB_BASE_URL}/project.html?name={quote(repo_name)}"
+    if run.get("id"):
+        link += f"&run={quote(str(run['id']))}"
+    return f"🧪 test_hub {verdict}: {passed} прошло / {failed} упало · <a href=\"{ESC(link)}\">отчёт</a>"
+
+
+def _repo_lines(bucket: dict) -> list[str]:
+    lines = [f"📁 <b>{ESC(bucket.get('name', '?'))}</b>" + (" ⏸ на паузе" if bucket.get("paused") else "")]
+    for m in bucket.get("missions") or []:
+        lines.append(f"🎯 {ESC(m['goal'][:80])} ({m['done']}/{m['total']})")
+    for t in bucket.get("running") or []:
+        lines.append(f"🛠 {_agent_title(t['agent'])}: {ESC(t['title'])}")
+    for t in bucket.get("review") or []:
+        lines.append(f"📝 {_agent_title(t['agent'])}: {ESC(t['title'])} — на ревью")
+    todo = bucket.get("todo") or []
+    if todo:
+        lines.append(f"⏳ в очереди: {len(todo)}")
+    for t in bucket.get("failed_24h") or []:
+        lines.append(f"❌ {ESC(t['title'])}" + (f" — {ESC(t['error'])}" if t.get("error") else ""))
+    if bucket.get("testhub"):
+        lines.append(_testhub_line(bucket.get("name", ""), bucket["testhub"]))
+    return lines
+
+
+def _digest_review_items(facts: dict) -> list[dict]:
+    items = []
     for bucket in (facts.get("repos") or {}).values():
-        parts = []
-        if bucket.get("missions"):
-            parts.append(f"миссии: {len(bucket['missions'])}")
-        if bucket.get("running"):
-            parts.append(f"в работе: {len(bucket['running'])}")
-        if bucket.get("review"):
-            parts.append(f"на ревью: {len(bucket['review'])}")
-        if bucket.get("todo"):
-            parts.append(f"в очереди: {len(bucket['todo'])}")
-        if bucket.get("failed_24h"):
-            parts.append(f"упало за сутки: {len(bucket['failed_24h'])}")
-        if bucket.get("paused"):
-            parts.append("на паузе")
-        lines.append(f"📁 <b>{ESC(bucket.get('name', '?'))}</b>: " + (", ".join(parts) if parts else "тихо"))
+        items.extend(bucket.get("review") or [])
+    return items
+
+
+def _review_kb(items: list[dict]) -> InlineKeyboardMarkup | None:
+    if not items:
+        return None
+    rows = []
+    for t in items:
+        label = f"{_agent_title(t['agent'])}: {t['title']}"[:48]
+        rows.append([InlineKeyboardButton(text=f"✅ {label}", callback_data=f"ao:approve:{t['id']}"),
+                     InlineKeyboardButton(text="❌ Отклонить", callback_data=f"ao:reject:{t['id']}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_digest_message(data: dict) -> str:
+    facts = data.get("facts") or {}
+    parts = [f"🐾 <b>Сводка Ральфа</b> · {_fmt_time(data.get('generated_at'))}", ""]
+
+    text = data.get("text")
+    if text:
+        parts.append(ESC(text))
+    else:
+        parts.append(f"Ральф молчит: {ESC(data.get('error') or 'не запускался')}")
+    parts.append("")
+
+    repos = list((facts.get("repos") or {}).values())
+    active = [b for b in repos if not _repo_quiet(b)]
+    quiet = [b for b in repos if _repo_quiet(b)]
+    for bucket in active:
+        parts.extend(_repo_lines(bucket))
+        parts.append("")
+    if quiet:
+        parts.append("😴 тихо: " + ", ".join(ESC(b.get("name", "?")) for b in quiet))
+        parts.append("")
+
     since = facts.get("since_last") or {}
     if since:
-        lines.append(f"\nс прошлой сводки: сделано {since.get('done_tasks', 0)}, "
+        parts.append(f"с прошлой сводки: сделано {since.get('done_tasks', 0)}, "
                      f"упало {since.get('failed_tasks', 0)}, ≈${since.get('cost_usd', 0):.2f} по API")
-    return "\n".join(lines) if lines else "фактов пока нет"
+
+    msg = "\n".join(parts).strip()
+    if len(msg) > DIGEST_MAX_LEN:
+        cut = msg[:DIGEST_MAX_LEN - 20]
+        nl = cut.rfind("\n")                  # режем по границе строки, чтобы не рвать HTML-тег внутри неё
+        if nl > 0:
+            cut = cut[:nl]
+        msg = cut.rstrip() + "\n…(обрезано)"
+    return msg
+
+
+async def _send_fresh_digest(message: Message) -> None:
+    thinking = await message.answer("🐾 Ральф думает…")
+    data = await _digest_scheduler.refresh_now()
+    if data.get("changed") is False:
+        await thinking.edit_text(f"Без изменений с {_fmt_time(data.get('generated_at'))}")
+        return
+    text = _format_digest_message(data)
+    kb = _review_kb(_digest_review_items(data.get("facts") or {}))
+    await thinking.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.message(Command("mission"))
@@ -343,6 +426,9 @@ async def new_task(message: Message) -> None:
         parts = text.split(maxsplit=1)
         name, description = parts[0], (parts[1] if len(parts) > 1 else "")
         await _create_repo(message, uid, name, description)
+        return
+    if re.sub(r"[^\w]+", "", text.lower()) == "чтопроисходит":
+        await _send_fresh_digest(message)
         return
     agent = "michael"
     m = re.match(r"@(\w+)\s+(.+)", text, re.S)
@@ -482,10 +568,47 @@ async def _on_event(ev: Event) -> None:
             await _notify_admins(text)
 
 
-async def run(office: Office, repos_fn, after_merge_cmd_fn, register_repo_fn) -> None:
+async def _tick_broadcast() -> None:
+    """Один тик автосводки: пересобрать и решить, слать ли — по отпечатку ПОСЛЕДНЕЙ ОТПРАВКИ
+    (_last_sent_fingerprint), а не по кэшу DigestScheduler (тот мог обновиться от /digest)."""
+    global _last_sent_fingerprint, _last_sent_at
+    data = await _digest_scheduler.refresh_now()
+    fp = data.get("fingerprint")
+    now = datetime.now()
+    if fp != _last_sent_fingerprint:
+        text = _format_digest_message(data)
+        kb = _review_kb(_digest_review_items(data.get("facts") or {}))
+        await _notify_admins(text, reply_markup=kb)
+        _last_sent_fingerprint, _last_sent_at = fp, now
+        return
+    if not config.AO_TG_DIGEST_QUIET:
+        text = _format_digest_message(data)
+        kb = _review_kb(_digest_review_items(data.get("facts") or {}))
+        await _notify_admins(text, reply_markup=kb)
+        _last_sent_at = now
+        return
+    if _last_sent_at is None or now - _last_sent_at >= timedelta(hours=1):
+        await _notify_admins(f"⏳ за час без изменений (с {_fmt_time(data.get('generated_at'))})")
+        _last_sent_at = now
+
+
+async def _digest_broadcast_loop() -> None:
+    """Первая сводка — не сразу после старта, а через AO_TG_DIGEST_MIN минут; 0 — цикл не запускаем."""
+    if config.AO_TG_DIGEST_MIN <= 0:
+        return
+    while True:
+        await asyncio.sleep(config.AO_TG_DIGEST_MIN * 60)
+        try:
+            await _tick_broadcast()
+        except Exception:
+            log.exception("автосводка: тик упал")
+
+
+async def run(office: Office, digest_scheduler, repos_fn, after_merge_cmd_fn, register_repo_fn) -> None:
     """Запускается как фоновая задача сервера, если задан AO_TG_TOKEN."""
-    global _office, _bot, _repos_fn, _after_merge_cmd_fn, _register_repo_fn
-    _office, _repos_fn, _after_merge_cmd_fn, _register_repo_fn = office, repos_fn, after_merge_cmd_fn, register_repo_fn
+    global _office, _bot, _digest_scheduler, _repos_fn, _after_merge_cmd_fn, _register_repo_fn
+    _office, _digest_scheduler = office, digest_scheduler
+    _repos_fn, _after_merge_cmd_fn, _register_repo_fn = repos_fn, after_merge_cmd_fn, register_repo_fn
     _load_prefs()
     _bot = Bot(token=config.TG_TOKEN)
     dp = Dispatcher()
@@ -493,4 +616,5 @@ async def run(office: Office, repos_fn, after_merge_cmd_fn, register_repo_fn) ->
     bus.subscribe(_on_event)
     me = await _bot.get_me()
     log.info("Telegram-мост: @%s, админы %s", me.username, sorted(config.TG_ADMINS))
+    asyncio.create_task(_digest_broadcast_loop())
     await dp.start_polling(_bot, handle_signals=False)

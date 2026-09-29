@@ -59,6 +59,12 @@ ALLURE_BIN = os.getenv("AO_ALLURE_BIN", "")
 AO_DIGEST_INTERVAL_MIN = int(os.getenv("AO_DIGEST_INTERVAL_MIN", "15"))
 AO_DIGEST_MODEL = os.getenv("AO_DIGEST_MODEL", "haiku")
 
+# Автосводка в Telegram: раз в сколько минут бот сам шлёт её всем AO_TG_ADMINS
+# (0 — не слать автоматически, только по запросу). Если с прошлой отправки ничего
+# не изменилось — по умолчанию молчать (раз в час короткая строка), 0 — слать всегда.
+AO_TG_DIGEST_MIN = int(os.getenv("AO_TG_DIGEST_MIN", "20"))
+AO_TG_DIGEST_QUIET = os.getenv("AO_TG_DIGEST_QUIET", "1") != "0"
+
 
 def ensure_dirs() -> None:
     for d in (WORKSPACE, AGENTS_DIR, LOGS_DIR, WORKTREES_DIR):
