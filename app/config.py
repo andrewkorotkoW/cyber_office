@@ -65,6 +65,27 @@ AO_DIGEST_MODEL = os.getenv("AO_DIGEST_MODEL", "haiku")
 AO_TG_DIGEST_MIN = int(os.getenv("AO_TG_DIGEST_MIN", "20"))
 AO_TG_DIGEST_QUIET = os.getenv("AO_TG_DIGEST_QUIET", "1") != "0"
 
+# Служебная учётка test_hub для блока "последний прогон" в сводке — она уже
+# заведена в test_hub под этим логином/паролем по умолчанию.
+AO_TESTHUB_LOGIN = os.getenv("AO_TESTHUB_LOGIN", "tg_bot")
+AO_TESTHUB_PASSWORD = os.getenv("AO_TESTHUB_PASSWORD", "tg_bot")
+
+
+def _parse_testhub_projects(raw: str) -> dict[str, str]:
+    """'auto_tests_vshgu=VSHGU,foo=BAR' -> {'auto_tests_vshgu': 'VSHGU', 'foo': 'BAR'}."""
+    result: dict[str, str] = {}
+    for pair in raw.split(","):
+        repo, sep, project = pair.partition("=")
+        if sep and repo.strip() and project.strip():
+            result[repo.strip()] = project.strip()
+    return result
+
+
+# Карта "папка репозитория" -> "имя проекта в test_hub" (имя в test_hub может не
+# совпадать с именем папки, см. AO_TESTHUB_LOGIN выше). Не указан репозиторий —
+# используется имя папки как есть.
+AO_TESTHUB_PROJECTS = _parse_testhub_projects(os.getenv("AO_TESTHUB_PROJECTS", ""))
+
 
 def ensure_dirs() -> None:
     for d in (WORKSPACE, AGENTS_DIR, LOGS_DIR, WORKTREES_DIR):
