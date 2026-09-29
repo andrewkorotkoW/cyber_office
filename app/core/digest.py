@@ -26,7 +26,7 @@ from app.core.tasks import TaskStore
 
 DIGEST_FILE = config.WORKSPACE / "digest.json"
 DIGEST_TIMEOUT = 60          # секунд на вызов claude -p Ральфом
-TESTHUB_URL = "http://127.0.0.1:8700/api/projects/{name}/runs"
+TESTHUB_BASE_URL = "http://127.0.0.1:8700"
 TESTHUB_TIMEOUT = 2.0
 
 NARRATE_PROMPT = """Ты — Ральф, корги владельца и докладчик офиса разработки: внимательный, бодрый, любишь цифры и косточки, не любишь воду.
@@ -41,12 +41,43 @@ NARRATE_PROMPT = """Ты — Ральф, корги владельца и док
 
 
 # ------------------------------------------------------------------ факты
+# Cookie-сессия к test_hub переиспользуется между вызовами collect_facts (логин —
+# служебной учёткой AO_TESTHUB_LOGIN/PASSWORD, один раз, перелогин при 401).
+_testhub_client: httpx.AsyncClient | None = None
+_testhub_logged_in = False
+
+
+def _testhub_get_client() -> httpx.AsyncClient:
+    global _testhub_client
+    if _testhub_client is None:
+        _testhub_client = httpx.AsyncClient(base_url=TESTHUB_BASE_URL, timeout=TESTHUB_TIMEOUT)
+    return _testhub_client
+
+
+async def _testhub_login(client: httpx.AsyncClient) -> None:
+    global _testhub_logged_in
+    resp = await client.post("/api/login", json={"login": config.AO_TESTHUB_LOGIN,
+                                                   "password": config.AO_TESTHUB_PASSWORD})
+    resp.raise_for_status()
+    _testhub_logged_in = True
+
+
 async def _fetch_testhub_run(repo_name: str) -> dict | None:
-    """Последний прогон test_hub для репозитория. Любая недоступность/ошибка/не-200 —
-    просто нет блока, наружу ничего не летит (test_hub — необязательный сосед)."""
+    """Последний прогон test_hub для репозитория. Любая недоступность/ошибка/не-200/
+    стойкий 401 — просто нет блока, наружу ничего не летит (test_hub — необязательный
+    сосед)."""
+    global _testhub_logged_in
+    project = config.AO_TESTHUB_PROJECTS.get(repo_name, repo_name)
+    url = f"/api/projects/{project}/runs"
     try:
-        async with httpx.AsyncClient(timeout=TESTHUB_TIMEOUT) as client:
-            resp = await client.get(TESTHUB_URL.format(name=repo_name))
+        client = _testhub_get_client()
+        if not _testhub_logged_in:
+            await _testhub_login(client)
+        resp = await client.get(url)
+        if resp.status_code == 401:
+            _testhub_logged_in = False
+            await _testhub_login(client)
+            resp = await client.get(url)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -56,9 +87,9 @@ async def _fetch_testhub_run(repo_name: str) -> dict | None:
     if not runs or not isinstance(runs[0], dict):
         return None
     run = runs[0]
-    return {"id": run.get("id") or run.get("run_id"), "stand": run.get("stand"),
-            "passed": run.get("passed"), "failed": run.get("failed"),
-            "started_at": run.get("started_at") or run.get("created_at") or run.get("finished_at")}
+    counts = run.get("counts") or {}
+    return {"id": run.get("id"), "stand": run.get("stand"), "status": run.get("status"),
+            "passed": counts.get("passed"), "failed": counts.get("failed"), "started": run.get("started")}
 
 
 def _task_entry(t) -> dict:
