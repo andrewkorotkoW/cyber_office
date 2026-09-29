@@ -26,7 +26,8 @@ from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton,
+                            InlineKeyboardMarkup, Message)
 
 from app import config
 from app.core import repo_init
@@ -50,9 +51,11 @@ _pending_reason: dict[int, str] = {}       # tg_id -> task_id, ждём текс
 _pending_task: dict[int, tuple[str, str]] = {}   # tg_id -> (agent, text): задача ждёт выбора репозитория
 _pending_newrepo: set[int] = set()         # tg_id -> следующим текстом ждём "имя [описание]" нового проекта
 _portrait_sent: set[str] = set()           # id задач, для которых уже отправляли фото-портрет агента
+_ralph_photo_file_id: str | None = None    # кэш file_id портрета Ральфа (см. tg_prefs.json), чтобы не грузить файл каждый раз
 PORTRAITS_DIR = config.ROOT / "ui" / "assets" / "portraits"
 
 DIGEST_MAX_LEN = 3500
+DIGEST_CAPTION_MAX = 1024                  # лимит Telegram на подпись к фото (у обычного сообщения — 4096)
 TESTHUB_BASE_URL = "http://127.0.0.1:8700"
 # автосводка: отпечаток/время ПОСЛЕДНЕЙ ОТПРАВКИ в чат (не путать с fingerprint внутри
 # DigestScheduler — тот про последний пересбор, а не про то, что реально ушло в Telegram)
@@ -61,15 +64,28 @@ _last_sent_at: datetime | None = None
 
 
 def _load_prefs() -> None:
-    global _current_repo
+    """tg_prefs.json: {"current_repo": {uid: repo}, "ralph_photo_file_id": "..."}.
+    Старый формат файла — плоский {uid: repo} без обёртки — читаем как current_repo."""
+    global _current_repo, _ralph_photo_file_id
     try:
-        _current_repo = {int(k): v for k, v in json.loads(_PREFS.read_text(encoding="utf-8")).items()}
+        raw = json.loads(_PREFS.read_text(encoding="utf-8"))
+    except Exception:
+        raw = {}
+    if "current_repo" in raw or "ralph_photo_file_id" in raw:
+        current_repo, _ralph_photo_file_id = raw.get("current_repo") or {}, raw.get("ralph_photo_file_id")
+    else:
+        current_repo, _ralph_photo_file_id = raw, None
+    try:
+        _current_repo = {int(k): v for k, v in current_repo.items()}
     except Exception:
         _current_repo = {}
 
 
 def _save_prefs() -> None:
-    _PREFS.write_text(json.dumps(_current_repo, ensure_ascii=False, indent=2), encoding="utf-8")
+    _PREFS.write_text(json.dumps({
+        "current_repo": {str(k): v for k, v in _current_repo.items()},
+        "ralph_photo_file_id": _ralph_photo_file_id,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 STATUS_RU = {"todo": "в очереди", "running": "в работе", "review": "на ревью", "done": "готово",
              "failed": "ошибка", "rejected": "отклонено"}
@@ -360,15 +376,66 @@ def _format_digest_message(data: dict) -> str:
     return msg
 
 
+def _ralph_photo_source():
+    """Файл портрета Ральфа — тот же, что офис показывает в модалке «Что происходит?»
+    (ui/assets/portraits/ralph.png, см. app/core/roster.py::AVATAR_BY_NAME)."""
+    agent = _office.roster.get("ralph") if _office else None
+    avatar = (agent.avatar if agent else "") or "ralph.png"
+    path = PORTRAITS_DIR / avatar
+    return path if path.exists() else None
+
+
+async def _send_ralph_photo(uid: int, **kw):
+    """Шлёт портрет Ральфа: первый раз — файлом (FSInputFile), дальше — по кэшированному
+    file_id (tg_prefs.json), чтобы не грузить картинку в Telegram каждый раз. None, если
+    портрета нет (тогда сводку шлём обычным текстом — см. _deliver_digest)."""
+    global _ralph_photo_file_id
+    if _ralph_photo_file_id:
+        photo = _ralph_photo_file_id
+    else:
+        path = _ralph_photo_source()
+        if path is None:
+            return None
+        photo = FSInputFile(path)
+    msg = await _bot.send_photo(uid, photo, **kw)
+    if not _ralph_photo_file_id and msg is not None and getattr(msg, "photo", None):
+        _ralph_photo_file_id = msg.photo[-1].file_id
+        _save_prefs()
+    return msg
+
+
+async def _deliver_digest(uids: list[int], data: dict, kb: InlineKeyboardMarkup | None) -> None:
+    """Сводка с портретом Ральфа: если текст укладывается в лимит подписи к фото (1024) —
+    одно фото с подписью и кнопками; иначе фото с короткой шапкой + отдельным текстовым
+    сообщением (кнопки — на нём, как раньше). Без портрета (файла нет) — просто текстом."""
+    if _bot is None:
+        return
+    text = _format_digest_message(data)
+    has_photo = bool(_ralph_photo_file_id or _ralph_photo_source())
+    for uid in uids:
+        try:
+            if not has_photo:
+                await _bot.send_message(uid, text, parse_mode="HTML", reply_markup=kb)
+            elif len(text) <= DIGEST_CAPTION_MAX:
+                await _send_ralph_photo(uid, caption=text, parse_mode="HTML", reply_markup=kb)
+            else:
+                header = f"🐾 <b>Ральф</b> · сводка {_fmt_time(data.get('generated_at'))}"
+                await _send_ralph_photo(uid, caption=header, parse_mode="HTML")
+                await _bot.send_message(uid, text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            log.exception("tg digest send failed")
+
+
 async def _send_fresh_digest(message: Message) -> None:
+    uid = message.from_user.id
     thinking = await message.answer("🐾 Ральф думает…")
     data = await _digest_scheduler.refresh_now()
     if data.get("changed") is False:
         await thinking.edit_text(f"Без изменений с {_fmt_time(data.get('generated_at'))}")
         return
-    text = _format_digest_message(data)
+    await thinking.delete()
     kb = _review_kb(_digest_review_items(data.get("facts") or {}))
-    await thinking.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await _deliver_digest([uid], data, kb)
 
 
 @router.message(Command("mission"))
@@ -576,15 +643,13 @@ async def _tick_broadcast() -> None:
     fp = data.get("fingerprint")
     now = datetime.now()
     if fp != _last_sent_fingerprint:
-        text = _format_digest_message(data)
         kb = _review_kb(_digest_review_items(data.get("facts") or {}))
-        await _notify_admins(text, reply_markup=kb)
+        await _deliver_digest(list(config.TG_ADMINS), data, kb)
         _last_sent_fingerprint, _last_sent_at = fp, now
         return
     if not config.AO_TG_DIGEST_QUIET:
-        text = _format_digest_message(data)
         kb = _review_kb(_digest_review_items(data.get("facts") or {}))
-        await _notify_admins(text, reply_markup=kb)
+        await _deliver_digest(list(config.TG_ADMINS), data, kb)
         _last_sent_at = now
         return
     if _last_sent_at is None or now - _last_sent_at >= timedelta(hours=1):
