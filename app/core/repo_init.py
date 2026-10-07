@@ -62,7 +62,7 @@ async def create(projects_dir: Path, name: str, description: str, template: str)
         tests_dir.mkdir()
         (tests_dir / "test_smoke.py").write_text(SMOKE_TEST, encoding="utf-8")
     await _run(path, "git", "add", "-A")
-    code, out = await _run(path, "git", "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
+    code, out = await _run(path, "git", 
                             "commit", "-q", "-m", "начало проекта")
     if code != 0:
         raise ValueError(f"git commit: {out}")

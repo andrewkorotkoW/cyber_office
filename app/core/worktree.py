@@ -124,7 +124,7 @@ async def _link_env(repo: Path, worktree: Path) -> None:
 async def commit_all(worktree: str, message: str) -> bool:
     """Коммитит всё, что агент оставил незакоммиченным. False — нечего коммитить."""
     await _git(worktree, "add", "-A")
-    code, out = await _git(worktree, "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
+    code, out = await _git(worktree,
                            "commit", "-q", "-m", message)
     return code == 0
 
@@ -169,7 +169,7 @@ async def merge(repo: str, branch: str, message: str, base: str | None = None) -
     if code != 0:
         return "failed", out
     try:
-        code, out = await _git(str(tmp), "-c", "user.name=cyber_office", "-c", "user.email=agent@office.local",
+        code, out = await _git(str(tmp), 
                                "merge", "--no-ff", "-q", "-m", message, branch)
         if code != 0:
             if "CONFLICT" in out:
