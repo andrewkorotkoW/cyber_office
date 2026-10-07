@@ -43,6 +43,8 @@ def find_claude_bin() -> str:
 
 CLAUDE_BIN = find_claude_bin()
 DEFAULT_MODEL = os.getenv("AO_MODEL", "sonnet")
+# Префикс веток агентов (личная настройка в .env, напр. ak → ak_<функционал>_<id6>); по умолчанию пусто — agent/<id>
+BRANCH_PREFIX = os.getenv("AO_BRANCH_PREFIX", "")
 MAX_TURNS = int(os.getenv("AO_MAX_TURNS", "100"))   # 40 не хватало на обзор проекта в 2000 строк
 AO_TASK_TIMEOUT = int(os.getenv("AO_TASK_TIMEOUT", "5400"))   # 90 мин — потолок на claude -p одной задачи
 AO_PLAN_TIMEOUT = int(os.getenv("AO_PLAN_TIMEOUT", "900"))    # 15 мин — потолок на планирование миссии

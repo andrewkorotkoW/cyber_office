@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import sys
 import uuid
 from pathlib import Path
+
+from .. import config
 
 from app.config import WORKTREES_DIR
 
@@ -43,9 +46,26 @@ async def default_branch(repo: str, base: str | None = None) -> str:
     return "main"
 
 
-async def create(repo: str, task_id: str) -> tuple[str, str]:
+_TRANSLIT = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z","и":"i","й":"y","к":"k",
+             "л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c",
+             "ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya"}
+
+
+def branch_name(task_id: str, title: str | None = None) -> str:
+    """Имя ветки задачи: `<AO_BRANCH_PREFIX>_<функционал>_<id6>` (по образцу feature/ak_auto_tests у коллег —
+    владелец 07.10.2026), функционал — транслит названия задачи, до 40 символов. Без названия или с пустым
+    префиксом — прежний вид `agent/<id>` (тесты/совместимость)."""
+    prefix = (config.BRANCH_PREFIX or "").strip()
+    if not prefix or not title:
+        return f"agent/{task_id}"
+    slug = "".join(_TRANSLIT.get(ch, ch) for ch in title.lower())
+    slug = re.sub(r"[^a-z0-9]+", "_", slug).strip("_")[:40].rstrip("_") or "task"
+    return f"{prefix}_{slug}_{task_id[:6]}"
+
+
+async def create(repo: str, task_id: str, title: str | None = None) -> tuple[str, str]:
     """Возвращает (branch, worktree_path)."""
-    branch = f"agent/{task_id}"
+    branch = branch_name(task_id, title)
     path = WORKTREES_DIR / task_id
     # снять старую регистрацию (после перезапуска сервера каталог мог остаться «missing but registered»)
     await _git(repo, "worktree", "remove", "--force", str(path))

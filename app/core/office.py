@@ -175,7 +175,7 @@ class Office:
         await bus.emit("agent.state", a.name, task.id, state="working")
         await bus.emit("task.updated", a.name, task.id, task=_pub(task))
         try:
-            branch, path = await worktree.create(task.repo, task.id)
+            branch, path = await worktree.create(task.repo, task.id, task.title)
             task.branch, task.worktree = branch, path
             system = a.system + "\n\nТвоя память (заметки с прошлых задач):\n" + memory.read(a.name)
             res = await self.runner.run(a.name, system, a.model, PROMPT_TEMPLATE.format(

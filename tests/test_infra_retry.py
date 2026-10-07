@@ -5,6 +5,8 @@ import subprocess
 
 import pytest
 
+from app.core import worktree
+
 from app.core.events import bus
 from app.core.office import Office
 from app.core.roster import Roster
@@ -80,9 +82,9 @@ async def test_auto_retry_recovers_after_infra_failures(workspace):
     assert "Автоматический повтор офиса" in t.prompt
     assert len(infra_events) == 1 and infra_events[0]["exhausted"] is False   # уведомили только про первое падение
 
-    branches = subprocess.run(["git", "branch", "--list", f"agent/{t.id}-prev"],
+    branches = subprocess.run(["git", "branch", "--list", f"{worktree.branch_name(t.id, t.title)}-prev"],
                                cwd=workspace["repo"], capture_output=True, text=True).stdout
-    assert f"agent/{t.id}-prev" in branches           # прошлая попытка сохранена, как при ручном повторе
+    assert f"{worktree.branch_name(t.id, t.title)}-prev" in branches           # прошлая попытка сохранена, как при ручном повторе
     bus.unsubscribe(listen)
 
 

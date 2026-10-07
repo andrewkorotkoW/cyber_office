@@ -266,7 +266,7 @@ AO_HOST=0.0.0.0 .venv/bin/python -m app.main
 
 ```
 app/core/tasks.py     задачи в workspace/tasks.json: todo → running → review → done
-app/core/worktree.py  ветка agent/<id> + git worktree на задачу; merge --no-ff после апрува
+app/core/worktree.py  ветка `ak_<функционал>_<id6>` (префикс AO_BRANCH_PREFIX, транслит названия задачи; пусто — agent/<id>) + git worktree на задачу; merge --no-ff после апрува
 app/core/runner.py    ClaudeRunner: claude -p --output-format stream-json; FakeRunner для тестов
 app/core/office.py    очередь по агентам (один агент — одна задача), ревью, reject/retry
 app/core/planner.py   миссия -> план подзадач (claude в режиме только чтение, строгий JSON)
@@ -314,7 +314,7 @@ sandbox/              учебный git-репозиторий для эксп�
 конфликт) — просто падает: задача остаётся в «ошибка» с полным текстом ошибки
 git в логе, без автоповтора, разбираться нужно вручную.
 
-Ветки `agent/<id>-prev`, которые `keep_previous()` заводит перед таким
+Ветки `<ветка задачи>-prev` (например `ak_..._<id6>-prev`), которые `keep_previous()` заводит перед таким
 автоповтором (хранят прошлую попытку — по ним агент делает `git diff`/
 `cherry-pick`), теперь удаляются автоматически: как только следующий мердж
 этой же задачи проходит успешно, `approve()` заодно чистит и `-prev`-ветку.

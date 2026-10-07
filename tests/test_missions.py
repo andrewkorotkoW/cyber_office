@@ -3,6 +3,8 @@ import subprocess
 
 import pytest
 
+from app.core import worktree
+
 from app.core.office import Office
 from app.core.planner import FakePlanner, parse_plan
 from app.core.roster import Roster
@@ -92,8 +94,8 @@ async def test_merge_conflict_marks_failed_and_retry_rebases(workspace):
     # конфликт: офис сам отправил задачу на перенос поверх main (retry), а не уронил в failed
     assert store.get(b.id).status in ("todo", "running", "review")
     assert "-prev" in store.get(b.id).prompt                  # агенту подсказали, где прошлая работа
-    branches = subprocess.run(["git", "branch", "--list", f"agent/{b.id}-prev"], cwd=workspace["repo"],
+    branches = subprocess.run(["git", "branch", "--list", f"{worktree.branch_name(b.id, b.title)}-prev"], cwd=workspace["repo"],
                               capture_output=True, text=True).stdout
-    assert f"agent/{b.id}-prev" in branches                   # ветка сохранена
+    assert f"{worktree.branch_name(b.id, b.title)}-prev" in branches                   # ветка сохранена
     assert await _wait(lambda: store.get(b.id).status == "review")
     ok, _ = await office.approve(b.id); assert ok            # переделано поверх нового main

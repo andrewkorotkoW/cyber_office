@@ -9,6 +9,7 @@ from app.core.office import Office
 from app.core.roster import Roster
 from app.core.runner import FakeRunner
 from app.core.tasks import TaskStore
+from app.core import worktree
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,7 +33,7 @@ async def test_full_cycle_review_merge(workspace):
     t = await office.create_task("Обновить README", "Добавь раздел про установку", workspace["repo"], "michael")
     assert await _wait_status(store, t.id, "review")
     t = store.get(t.id)
-    assert t.branch == f"agent/{t.id}" and t.diff_stat and "notes_michael" in t.diff_stat
+    assert t.branch == worktree.branch_name(t.id, t.title) and t.diff_stat and "notes_michael" in t.diff_stat
     for _ in range(40):                      # статус review выставляется чуть раньше, чем агент освобождается
         if roster.get("michael").state == "idle":
             break
