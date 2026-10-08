@@ -46,7 +46,7 @@ async def test_full_cycle_review_merge(workspace):
     ok, _ = await office.approve(t.id)
     assert ok and store.get(t.id).status == "done"
     log = subprocess.run(["git", "log", "--oneline"], cwd=workspace["repo"], capture_output=True, text=True).stdout
-    assert "michael: Обновить README" in log
+    assert "Обновить README" in log
     # правка дошла до main (в объектах git): approve мерджит во временном worktree и
     # двигает ветку через update-ref, не трогая рабочую копию пользователя — поэтому
     # смотрим содержимое ветки через git, а не файлы на диске основного чекаута

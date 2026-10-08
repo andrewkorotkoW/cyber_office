@@ -188,7 +188,7 @@ class Office:
                     title=task.title, tail=tail, cwd=path), path, task.id)
                 res2.cost_usd += res.cost_usd; res2.turns += res.turns
                 res = res2
-            await worktree.commit_all(path, f"{a.name}: {task.title}")   # если агент забыл закоммитить
+            await worktree.commit_all(path, task.title)   # если агент забыл закоммитить
             task.result, task.cost_usd, task.turns = res.text, res.cost_usd, res.turns
             task.diff_stat = await worktree.diff_stat(task.repo, branch, self.base_for(task.repo))
             if res.ok:
@@ -338,7 +338,7 @@ class Office:
         # (например, упёрся в запрет команды) — такую принимаем только с явным force
         if not force and not (t.diff_stat or "").strip():
             return False, self.EMPTY_DIFF_MSG
-        status, out = await worktree.merge(t.repo, t.branch, f"{t.agent}: {t.title} (#{t.id})", self.base_for(t.repo))
+        status, out = await worktree.merge(t.repo, t.branch, f"{t.title} (#{t.id})", self.base_for(t.repo))
         if status == "ok":
             t.merge_commit = out
             await worktree.remove(t.repo, t.branch, t.worktree, delete_branch=True)
