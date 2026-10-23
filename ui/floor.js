@@ -47,9 +47,12 @@
   // четыре агента получают собственный силуэт/палитру вместо процедурной причёски — по описаниям cyberpunk-портретов
   // (ui/assets/portraits/*.png). Для незнакомых имён используется прежний генератор (HAIRSTYLES/FACE_ROWS выше).
   const CHAR_PALETTE = {
-    michael: { skin: P.s, hair: '#2e2013', eye: '#4fa8ff', jacket: '#1d3a66', neon: '#7ec8ff' },
-    dwight: { skin: '#dfe4ec', hair: '#dfe4ec', eye: '#ffd23f', jacket: '#c9cfd8', neon: '#3fe0c8', emblem: '#f2c14e' },
-    pam: { skin: P.s, hair: '#ff4fa3', eye: '#3fe0c8', jacket: '#15161d', neon: '#3fe0c8', shoulder: '#ff4fa3' },
+    // Майкл: тёмная кожаная куртка (jacket), голубой акцент воротника (neon) — цвет его карточки в roster.py (#4f8cff)
+    michael: { skin: P.s, hair: '#2e2013', eye: '#4fa8ff', jacket: '#241a15', neon: '#5fa6ff' },
+    // Дуайт: оливковый QA-жилет вместо куртки, янтарный глаз — цвет его карточки (#ff9a3c); implant-акценты ниже уже тёплого/бирюзового
+    dwight: { skin: '#dfe4ec', hair: '#dfe4ec', eye: '#ff9a3c', jacket: '#4b5245', neon: '#3fe0c8', emblem: '#c7ccd3' },
+    // Пэм: тёплый кардиган вместо чёрной куртки, каштановые волосы в пучке — её цвет (#ff4fa3) остался на пуговице/блике
+    pam: { skin: P.s, hair: '#6b3d2e', eye: '#5a8a52', jacket: '#b5607d', neon: '#ff8fc4', shoulder: '#ff4fa3' },
     // корги-докладчик: рыжая шерсть (hair) на ушах/щеках, кремово-белая (skin/jacket) на морде и теле —
     // portrait ui/assets/portraits/ralph.png того же рыже-белого окраса
     ralph: { skin: '#f6e2c4', hair: '#c9772f', eye: '#3a2712', jacket: '#f5ead9' },
@@ -65,10 +68,11 @@
       rb(['.', 3], ['h', 10], ['.', 3]),
       rb(['.', 2], ['h', 12], ['.', 2]),
     ],
-    pam: [ // розовый ирокез, правый висок выбрит (полоска кожи 's' вместо волос)
-      rb(['.', 3], ['h', 8], ['.', 5]),
-      rb(['.', 2], ['h', 9], ['s', 1], ['.', 4]),
-      rb(['.', 1], ['h', 10], ['s', 2], ['.', 3]),
+    pam: [ // каштановые волосы, собранные в пучок — небольшая шишка на самой макушке, ниже обычная
+      // причёска во всю ширину головы (как у dwight/generic), без выбритого виска
+      rb(['.', 6], ['h', 4], ['.', 6]),
+      rb(['.', 2], ['h', 12], ['.', 2]),
+      rb(['.', 1], ['h', 14], ['.', 1]),
     ],
     ralph: [ // стоячие остроконечные уши корги: узкие рыжие кончики сверху, у основания шире с белой
       // внутренней стороной ('w' — не входит в CHAR_PALETTE, берётся из общей палитры P как обычный белый)
@@ -327,8 +331,15 @@
     return positions;
   }
   function computeHomes(n) {
-    if (THEME_NAME === 'cyberpunk') return computeDeskPositions(n, sceneObstacleRects());
-    return Array.from({ length: n }, (_, i) => ({ x: deskX(i, n), y: DESK_HOME_Y }));
+    // раскладка станций теперь всегда идёт через изометрическую сетку (ISO.stationsFor) — старая ветка
+    // THEME_NAME==='cyberpunk' (computeDeskPositions/sceneObstacleRects) больше не используется для
+    // реальной расстановки, но сами эти функции остаются экспортированными и протестированными как есть.
+    // home несёт и пиксельный якорь (x,y — для конвертов/подписей/речевых пузырей), и исходные grid-
+    // координаты (gx,gy — для отрисовки изо-стола и билборда персонажа в drawActors)
+    return ISO.stationsFor(n).map(({ gx, gy }) => {
+      const p = ISO.anchorFor(gx, gy);
+      return { x: p.x, y: p.y, gx, gy };
+    });
   }
 
   function setAgents(list) {
@@ -530,7 +541,9 @@
   // ---------------------------------------------------------------- подписи с читаемостью на тёмной cyberpunk-сцене
   // на cyberpunk — тёмная обводка под текстом перед заливкой; на arcade/gameboy — как раньше, без обводки
   function drawLabel(text, x, y, color) {
-    if (THEME_NAME === 'cyberpunk') { o.lineWidth = 3; o.strokeStyle = 'rgba(8,9,20,0.85)'; o.strokeText(text, x, y); }
+    // тёмная обводка текста всегда (раньше — только на cyberpunk-теме): единая изо-сцена под всеми темами
+    // пёстрая и светящаяся местами (неон окон, bloom вывески, хаб), обычный текст без обводки теряется
+    o.lineWidth = 3; o.strokeStyle = 'rgba(8,9,20,0.85)'; o.strokeText(text, x, y);
     o.fillStyle = color; o.fillText(text, x, y);
   }
 
@@ -953,7 +966,971 @@
   }
   const PET_COUNT = cats.length + 1; // два кота + кибер-пёс
 
-  // ---- старый рисованный этаж (arcade/gameboy) — та же геометрия, что и раньше, просто в мире 768×432
+  // ================================================================== BIG: детальный рендер (замена стиля)
+  // Новый художественный стиль целиком: вместо спрайтов-строк 16×26 — персонажи и стол, нарисованные через
+  // градиенты/кривые canvas (та же техника, что в артефактах hero-anchor/office-scene этой сессии), заранее
+  // отрисованные ОДИН раз в офскрин-битмапы при загрузке и затем просто вставляемые (`drawImage`) каждый кадр —
+  // дорогая отрисовка (градиенты/суперсэмплинг) не повторяется 60 раз в секунду. CHAR_PALETTE/CHAR_HEADS/
+  // humanRows() выше НЕ трогаем и не удаляем — они больше не используются для отрисовки, но тесты (test_floor_js.py)
+  // явно проверяют их форму, и ломать уже протестированный контракт незачем.
+  const BIG = {};
+  (function buildBig() {
+    function seg(x, w, base, sh, shW) { shW = shW == null ? 2 : shW; if (w <= shW) return [[x, w, sh]]; return [[x, w - shW, base], [x + (w - shW), shW, sh]]; }
+    function row(blocks, y, segs) { for (const [x, w, color] of segs) blocks.push({ x, y, w, h: 1, color }); }
+    function rect(blocks, x, y, w, h, color) { blocks.push({ x, y, w, h, color }); }
+    function scaleBlocks(list, k) { return list.map(b => ({ x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k, color: b.color })); }
+    function mix(hex, amt) {
+      const n = parseInt(hex.slice(1), 16); const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      const f = c => Math.max(0, Math.min(255, amt >= 0 ? c + (255 - c) * amt : c * (1 + amt)));
+      return `rgb(${f(r) | 0},${f(g) | 0},${f(b) | 0})`;
+    }
+    function renderBody(ctx, doll, px, outline) {
+      ctx.save(); ctx.fillStyle = outline;
+      for (const blk of doll.blocks) ctx.fillRect((blk.x - 1) * px, (blk.y - 1) * px, (blk.w + 2) * px, (blk.h + 2) * px);
+      for (const blk of doll.blocks) { ctx.fillStyle = blk.color; ctx.fillRect(blk.x * px, blk.y * px, blk.w * px, blk.h * px); }
+      for (const d of (doll.fine || [])) { ctx.fillStyle = d.color; ctx.fillRect(d.x * px, d.y * px, d.w * px, d.h * px); }
+      ctx.restore();
+    }
+    const GRID = 40, ROWS = 60;
+
+    function poseHands(pose, P) {
+      if (pose === 'type') return [[16, [[3, 2, P.skin], [14, 2, P.skinSh]]], [17, [[7, 2, P.skin], [11, 2, P.skinSh]]], [18, [[8, 2, P.skin], [10, 2, P.skinSh]]]];
+      if (pose === 'lean') return [[14, [[7, 2, P.skin], [11, 2, P.skinSh]]], [15, [[8, 2, P.skin], [10, 2, P.skinSh]]]];
+      if (pose === 'failed') return [[19, [[4, 2, P.skin], [14, 2, P.skinSh]]], [20, [[4, 2, P.skin], [14, 2, P.skinSh]]]];
+      return [[16, [[3, 2, P.skin], [14, 2, P.skinSh]]], [17, [[4, 2, P.skin], [13, 2, P.skinSh]]], [18, [[4, 2, P.skin], [12, 2, P.skinSh]]]];
+    }
+    function poseFaceOverlay(ctx, px, P, pose, my) {
+      if (pose !== 'failed' && pose !== 'done') return;
+      const cx = 20 * px, rx = 11 * px, ry = 5.5 * px;
+      ctx.save();
+      if (pose === 'failed') {
+        ctx.strokeStyle = P.mouth; ctx.lineWidth = px * 0.22; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(cx - rx * 0.18, my + ry * 0.06); ctx.quadraticCurveTo(cx, my - ry * 0.12, cx + rx * 0.18, my + ry * 0.06); ctx.stroke();
+        ctx.fillStyle = 'rgba(150,205,255,.85)';
+        ctx.beginPath(); ctx.ellipse(cx + rx * 0.62, my - ry * 1.5, rx * 0.06, rx * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.strokeStyle = P.mouth; ctx.lineWidth = px * 0.24; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(cx - rx * 0.22, my - ry * 0.02); ctx.quadraticCurveTo(cx, my + ry * 0.3, cx + rx * 0.22, my - ry * 0.02); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,225,140,.9)';
+        for (const [sx, sy] of [[-1, -1.8], [1.1, -2.1], [0.2, -2.5]]) { ctx.beginPath(); ctx.arc(cx + sx * rx * 0.5, my + sy * ry * 0.5, rx * 0.035, 0, Math.PI * 2); ctx.fill(); }
+      }
+      ctx.restore();
+    }
+
+    // ---- Michael ----
+    function buildDollMichael(P, pose) {
+      const b = [];
+      row(b, 0, [[6, 8, P.hair]]); row(b, 1, [[4, 12, P.hair]]); row(b, 2, [[3, 14, P.hair]]);
+      row(b, 3, [[2, 3, P.hairSh], ...seg(5, 10, P.skin, P.skinSh), [15, 3, P.hair]]);
+      row(b, 4, [[2, 2, P.hairSh], ...seg(4, 12, P.skin, P.skinSh), [16, 2, P.hair]]);
+      row(b, 5, [[2, 1, P.hair], ...seg(3, 14, P.skin, P.skinSh), [17, 1, P.hairSh]]);
+      row(b, 6, seg(2, 16, P.skin, P.skinSh, 3)); row(b, 7, seg(4, 12, P.skin, P.skinSh, 3));
+      row(b, 8, seg(5, 10, P.skin, P.skinSh, 3)); row(b, 9, seg(6, 8, P.skin, P.skinSh, 2));
+      row(b, 10, seg(7, 6, P.skin, P.skinSh, 2));
+      const torso = [[11, 3, 13], [12, 3, 13], [13, 4, 12], [14, 4, 11], [15, 5, 10], [16, 5, 9], [17, 6, 8], [18, 6, 8]];
+      for (const [y, x, w] of torso) row(b, y, seg(x, w, P.jacket, P.jacketSh, 2));
+      for (let y = 12; y <= 18; y++) row(b, y, seg(8, 3, P.tshirt, P.tshirtSh, 1));
+      b.push({ x: 4, y: 11, w: 1, h: 1, color: P.accent }); b.push({ x: 14, y: 11, w: 1, h: 1, color: P.accent });
+      for (const [y, segs] of poseHands(pose, P)) row(b, y, segs);
+      for (let y = 19; y <= 25; y++) { row(b, y, seg(6, 4, P.pants, P.pantsSh, 2)); row(b, y, seg(11, 4, P.pants, P.pantsSh, 2)); }
+      for (let y = 26; y <= 29; y++) { row(b, y, seg(6, 4, P.shoe, P.shoeSh, 2)); row(b, y, seg(11, 4, P.shoe, P.shoeSh, 2)); }
+      return { blocks: b };
+    }
+    function buildDoll2xMichael(P, pose) {
+      const blocks = scaleBlocks(buildDollMichael(P, pose).blocks, 2);
+      blocks.push({ x: 4, y: 9, w: 2, h: 4, color: P.skinSh }); blocks.push({ x: 34, y: 9, w: 2, h: 4, color: P.skinSh });
+      const fine = [{ x: 19, y: 0, w: 2, h: 6, color: P.hairSh }];
+      fine.push({ x: 14, y: 24, w: 1, h: 14, color: P.jacketHi }); fine.push({ x: 22, y: 24, w: 1, h: 14, color: P.jacketHi });
+      fine.push({ x: 18, y: 25, w: 2, h: 13, color: '#232323' }); fine.push({ x: 17, y: 30, w: 4, h: 3, color: P.metal });
+      fine.push({ x: 9, y: 30, w: 5, h: 2, color: P.jacketSh }); fine.push({ x: 24, y: 30, w: 5, h: 2, color: P.jacketSh });
+      fine.push({ x: 12, y: 37, w: 16, h: 1, color: P.jacketHi });
+      fine.push({ x: 12, y: 38, w: 18, h: 2, color: P.belt }); fine.push({ x: 19, y: 38, w: 2, h: 2, color: P.metal });
+      fine.push({ x: 12, y: 59, w: 8, h: 1, color: P.sole }); fine.push({ x: 22, y: 59, w: 8, h: 1, color: P.sole });
+      fine.push({ x: 14, y: 54, w: 2, h: 2, color: P.metal }); fine.push({ x: 26, y: 54, w: 2, h: 2, color: P.metal });
+      return { blocks, fine };
+    }
+    function paintFaceMichael(ctx, px, P) {
+      const cx = 20 * px, cy = 10.5 * px, rx = 11 * px, ry = 5.5 * px;
+      ctx.save(); ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.clip();
+      const base = ctx.createRadialGradient(cx - rx * 0.4, cy - ry * 0.6, rx * 0.15, cx, cy, rx * 1.4);
+      base.addColorStop(0, mix(P.skin, 0.22)); base.addColorStop(0.5, P.skin); base.addColorStop(1, mix(P.skin, -0.28));
+      ctx.fillStyle = base; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const side = ctx.createLinearGradient(cx - rx * 0.1, 0, cx + rx * 1.1, 0);
+      side.addColorStop(0, 'rgba(0,0,0,0)'); side.addColorStop(0.75, 'rgba(0,0,0,0)'); side.addColorStop(1, 'rgba(10,6,4,.4)');
+      ctx.fillStyle = side; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const hot = ctx.createRadialGradient(cx - rx * 0.15, cy - ry * 0.55, 0, cx - rx * 0.15, cy - ry * 0.55, rx * 0.55);
+      hot.addColorStop(0, 'rgba(255,240,215,.4)'); hot.addColorStop(1, 'rgba(255,240,215,0)');
+      ctx.fillStyle = hot; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const eyeY = cy - ry * 0.05;
+      for (const sx of [-1, 1]) {
+        const ex = cx + sx * rx * 0.42;
+        ctx.fillStyle = mix(P.skin, -0.22); ctx.beginPath(); ctx.ellipse(ex, eyeY + ry * 0.2, rx * 0.2, ry * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = mix(P.skin, -0.18); ctx.beginPath(); ctx.ellipse(ex, eyeY - ry * 0.08, rx * 0.22, ry * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ece2d2'; ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.17, ry * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+        const iris = ctx.createRadialGradient(ex, eyeY, 1, ex, eyeY, rx * 0.1);
+        iris.addColorStop(0, '#5aa6d8'); iris.addColorStop(0.6, '#2a5f8a'); iris.addColorStop(1, '#13283a');
+        ctx.fillStyle = iris; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.085, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#0b0e13'; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.04, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.beginPath(); ctx.arc(ex - rx * 0.03, eyeY - ry * 0.05, rx * 0.02, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = mix(P.skin, -0.35); ctx.lineWidth = px * 0.28; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(ex - rx * 0.2, eyeY - ry * 0.02); ctx.quadraticCurveTo(ex, eyeY - ry * 0.26, ex + rx * 0.2, eyeY - ry * 0.06); ctx.stroke();
+        const inX = ex - sx * rx * 0.1, inY = eyeY - ry * 0.4, outX = ex + sx * rx * 0.34, outY = eyeY - ry * 0.7;
+        const midX = (inX + outX) / 2, midY = (inY + outY) / 2 - ry * 0.06;
+        const nrm = { x: -(outY - inY), y: (outX - inX) }; const nl = Math.hypot(nrm.x, nrm.y) || 1;
+        const t1 = (ry * 0.2) / nl, t2 = (ry * 0.1) / nl;
+        ctx.fillStyle = P.hairSh;
+        ctx.beginPath();
+        ctx.moveTo(inX + nrm.x * t2, inY + nrm.y * t2);
+        ctx.quadraticCurveTo(midX + nrm.x * t1, midY + nrm.y * t1, outX + nrm.x * t2 * 0.6, outY + nrm.y * t2 * 0.6);
+        ctx.quadraticCurveTo(midX - nrm.x * t1 * 0.5, midY - nrm.y * t1 * 0.5, inX - nrm.x * t2 * 0.5, inY - nrm.y * t2 * 0.5);
+        ctx.closePath(); ctx.fill();
+      }
+      const nx = cx + rx * 0.02, nTop = cy - ry * 0.25, nBot = cy + ry * 0.6;
+      ctx.beginPath(); ctx.moveTo(nx - rx * 0.06, nTop); ctx.lineTo(nx - rx * 0.15, nBot - ry * 0.1);
+      ctx.quadraticCurveTo(nx - rx * 0.03, nBot + ry * 0.08, nx + rx * 0.13, nBot - ry * 0.1); ctx.lineTo(nx + rx * 0.07, nTop); ctx.closePath();
+      const noseGrad = ctx.createLinearGradient(nx - rx * 0.15, 0, nx + rx * 0.15, 0);
+      noseGrad.addColorStop(0, mix(P.skin, 0.32)); noseGrad.addColorStop(0.5, P.skin); noseGrad.addColorStop(1, mix(P.skin, -0.5));
+      ctx.fillStyle = noseGrad; ctx.fill();
+      ctx.fillStyle = mix(P.skin, -0.5);
+      for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(nx + sx * rx * 0.12, nBot, rx * 0.05, 0, Math.PI * 2); ctx.fill(); }
+      const my = cy + ry * 0.95;
+      ctx.strokeStyle = P.mouth; ctx.lineWidth = px * 0.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.2, my); ctx.quadraticCurveTo(cx, my + ry * 0.02, cx + rx * 0.2, my); ctx.stroke();
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cx - rx * 0.82, my - ry * 0.5);
+      ctx.quadraticCurveTo(cx - rx * 0.3, my - ry * 0.12, cx, my + ry * 0.08);
+      ctx.quadraticCurveTo(cx + rx * 0.3, my - ry * 0.12, cx + rx * 0.82, my - ry * 0.5);
+      ctx.quadraticCurveTo(cx + rx * 0.9, my + ry * 0.3, cx + rx * 0.55, my + ry * 0.82);
+      ctx.quadraticCurveTo(cx + rx * 0.25, my + ry * 1.15, cx, my + ry * 1.2);
+      ctx.quadraticCurveTo(cx - rx * 0.25, my + ry * 1.15, cx - rx * 0.55, my + ry * 0.82);
+      ctx.quadraticCurveTo(cx - rx * 0.9, my + ry * 0.3, cx - rx * 0.82, my - ry * 0.5);
+      ctx.closePath();
+      const beardFill = ctx.createLinearGradient(cx - rx * 0.8, 0, cx + rx * 0.8, 0);
+      beardFill.addColorStop(0, P.beardSh); beardFill.addColorStop(0.45, P.beard); beardFill.addColorStop(1, P.beardSh);
+      ctx.fillStyle = beardFill; ctx.fill();
+      for (const sx of [-1, 1]) {
+        ctx.beginPath(); ctx.ellipse(cx + sx * rx * 0.15, my - ry * 0.2, rx * 0.19, ry * 0.16, sx * 0.3, 0, Math.PI * 2);
+        ctx.fillStyle = mix(P.beardSh, -0.3); ctx.fill();
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.strokeStyle = 'rgba(214,180,120,.55)'; ctx.lineWidth = px * 0.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.85, cy - ry * 2.8); ctx.quadraticCurveTo(cx - rx * 0.55, cy - ry * 1.6, cx - rx * 1.05, cy + ry * 0.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + rx * 0.5, cy - ry * 3.1); ctx.quadraticCurveTo(cx + rx * 0.9, cy - ry * 1.8, cx + rx * 1.0, cy + ry * 0.2); ctx.stroke();
+      ctx.restore();
+      poseFaceOverlay(ctx, px, P, P.__pose, my);
+    }
+    const MICHAEL = {
+      skin: '#e8b382', skinSh: '#c98f61', hair: '#4a3225', hairSh: '#32211a',
+      beard: '#4a3225', beardSh: '#32211a', jacket: '#241a15', jacketSh: '#17120f', jacketHi: '#4a3d33',
+      tshirt: '#17171b', tshirtSh: '#0b0b0e', pants: '#2b2f3d', pantsSh: '#1b1e28',
+      shoe: '#6b4a30', shoeSh: '#4a3220', sole: '#2e2015',
+      accent: '#4f8cff', mouth: '#8a5a52', metal: '#b9bec7', belt: '#1a1510',
+    };
+
+    // ---- Dwight ----
+    function buildDollDwight(P) {
+      const b = [];
+      row(b, 0, [[7, 6, P.skin]]); row(b, 1, [[5, 10, P.skin]]); row(b, 2, [[4, 12, P.skin]]);
+      row(b, 3, [[2, 2, P.skinSh], ...seg(5, 10, P.skin, P.skinSh), [15, 3, P.skin]]);
+      row(b, 4, [[2, 1, P.skinSh], ...seg(4, 12, P.skin, P.skinSh), [16, 1, P.skinSh]]);
+      row(b, 5, seg(3, 14, P.skin, P.skinSh, 1));
+      row(b, 6, seg(2, 16, P.skin, P.skinSh, 3)); row(b, 7, seg(4, 12, P.skin, P.skinSh, 3));
+      row(b, 8, seg(5, 10, P.skin, P.skinSh, 3)); row(b, 9, seg(6, 8, P.skin, P.skinSh, 2));
+      row(b, 10, seg(7, 6, P.skin, P.skinSh, 2));
+      const torso = [[11, 3, 13], [12, 3, 13], [13, 4, 12], [14, 4, 11], [15, 5, 10], [16, 5, 9], [17, 6, 8], [18, 6, 8]];
+      for (const [y, x, w] of torso) row(b, y, seg(x, w, P.jacket, P.jacketSh, 2));
+      for (let y = 12; y <= 18; y++) row(b, y, seg(8, 3, P.tshirt, P.tshirtSh, 1));
+      b.push({ x: 4, y: 11, w: 1, h: 1, color: P.accent }); b.push({ x: 14, y: 11, w: 1, h: 1, color: P.accent });
+      row(b, 16, [[3, 2, P.skin], [14, 2, P.skinSh]]); row(b, 17, [[4, 2, P.skin], [13, 2, P.skinSh]]); row(b, 18, [[4, 2, P.skin], [12, 2, P.skinSh]]);
+      for (let y = 19; y <= 25; y++) { row(b, y, seg(6, 4, P.pants, P.pantsSh, 2)); row(b, y, seg(11, 4, P.pants, P.pantsSh, 2)); }
+      for (let y = 26; y <= 29; y++) { row(b, y, seg(6, 4, P.shoe, P.shoeSh, 2)); row(b, y, seg(11, 4, P.shoe, P.shoeSh, 2)); }
+      return { blocks: b };
+    }
+    function buildDoll2xDwight(P) {
+      const blocks = scaleBlocks(buildDollDwight(P).blocks, 2);
+      blocks.push({ x: 4, y: 9, w: 2, h: 4, color: P.skinSh }); blocks.push({ x: 34, y: 9, w: 2, h: 4, color: P.skinSh });
+      const fine = [];
+      fine.push({ x: 14, y: 24, w: 1, h: 14, color: P.jacketHi }); fine.push({ x: 22, y: 24, w: 1, h: 14, color: P.jacketHi });
+      fine.push({ x: 18, y: 25, w: 1, h: 4, color: P.jacketSh });
+      fine.push({ x: 15, y: 29, w: 8, h: 6, color: P.jacketHi }); fine.push({ x: 16, y: 30, w: 6, h: 4, color: '#15171a' });
+      fine.push({ x: 17, y: 31, w: 4, h: 2, color: P.accent });
+      fine.push({ x: 9, y: 34, w: 3, h: 3, color: P.jacketSh });
+      fine.push({ x: 9, y: 30, w: 5, h: 2, color: P.jacketSh }); fine.push({ x: 24, y: 30, w: 5, h: 2, color: P.jacketSh });
+      fine.push({ x: 12, y: 37, w: 16, h: 1, color: P.jacketHi });
+      fine.push({ x: 12, y: 38, w: 18, h: 2, color: P.belt }); fine.push({ x: 19, y: 38, w: 2, h: 2, color: P.metal });
+      fine.push({ x: 12, y: 59, w: 8, h: 1, color: P.sole }); fine.push({ x: 22, y: 59, w: 8, h: 1, color: P.sole });
+      fine.push({ x: 13, y: 54, w: 6, h: 1, color: P.metal }); fine.push({ x: 23, y: 54, w: 6, h: 1, color: P.metal });
+      fine.push({ x: 31, y: 18, w: 2, h: 6, color: P.cyborgDark }); fine.push({ x: 32, y: 19, w: 1, h: 1, color: P.accent });
+      fine.push({ x: 24, y: 32, w: 8, h: 6, color: P.metal }); fine.push({ x: 27, y: 32, w: 1, h: 6, color: P.cyborgDark });
+      fine.push({ x: 25, y: 35, w: 2, h: 2, color: P.cyborgScreen });
+      return { blocks, fine };
+    }
+    function paintFaceDwight(ctx, px, P) {
+      const cx = 20 * px, cy = 10.5 * px, rx = 11 * px, ry = 5.5 * px;
+      ctx.save(); ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.clip();
+      const base = ctx.createRadialGradient(cx - rx * 0.4, cy - ry * 0.6, rx * 0.15, cx, cy, rx * 1.4);
+      base.addColorStop(0, mix(P.skin, 0.2)); base.addColorStop(0.5, P.skin); base.addColorStop(1, mix(P.skin, -0.26));
+      ctx.fillStyle = base; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const side = ctx.createLinearGradient(cx - rx * 0.1, 0, cx + rx * 1.1, 0);
+      side.addColorStop(0, 'rgba(0,0,0,0)'); side.addColorStop(0.7, 'rgba(0,0,0,0)'); side.addColorStop(1, 'rgba(10,6,4,.35)');
+      ctx.fillStyle = side; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const hot = ctx.createRadialGradient(cx - rx * 0.15, cy - ry * 0.55, 0, cx - rx * 0.15, cy - ry * 0.55, rx * 0.5);
+      hot.addColorStop(0, 'rgba(255,240,215,.35)'); hot.addColorStop(1, 'rgba(255,240,215,0)');
+      ctx.fillStyle = hot; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      ctx.fillStyle = P.metal; ctx.fillRect(cx + rx * 0.16, cy - ry * 0.62, rx * 0.5, ry * 0.12);
+      function trace(x, y, dir, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = rx * 0.03; ctx.lineCap = 'square';
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dir * rx * 0.16, y); ctx.lineTo(x + dir * rx * 0.16, y - ry * 0.22); ctx.lineTo(x + dir * rx * 0.3, y - ry * 0.22); ctx.stroke();
+        ctx.fillStyle = color;
+        for (const [tx, ty] of [[x, y], [x + dir * rx * 0.16, y - ry * 0.22], [x + dir * rx * 0.3, y - ry * 0.22]]) { ctx.beginPath(); ctx.arc(tx, ty, rx * 0.018, 0, Math.PI * 2); ctx.fill(); }
+      }
+      for (const sx of [-1, 1]) {
+        const tcol = sx === 1 ? 'rgba(58,217,176,.6)' : mix(P.cyborgScreen, -0.1);
+        trace(cx + sx * rx * 0.58, cy - ry * 0.5, sx, tcol); trace(cx + sx * rx * 0.64, cy - ry * 0.1, sx, tcol);
+      }
+      const eyeY = cy - ry * 0.05;
+      for (const sx of [-1, 1]) {
+        const ex = cx + sx * rx * 0.42;
+        if (sx === 1) {
+          ctx.fillStyle = mix(P.cyborgDark, -0.1); ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.24, ry * 0.18, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#0b0c0e'; ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.19, ry * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+          const slit = ctx.createLinearGradient(ex - rx * 0.16, eyeY, ex + rx * 0.16, eyeY);
+          slit.addColorStop(0, '#7a3c0a'); slit.addColorStop(0.5, '#ffd36a'); slit.addColorStop(1, '#7a3c0a');
+          ctx.fillStyle = slit; ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.16, ry * 0.045, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(255,230,180,.8)'; ctx.fillRect(ex - rx * 0.1, eyeY - ry * 0.015, rx * 0.2, ry * 0.03);
+          continue;
+        }
+        ctx.fillStyle = mix(P.skin, -0.2); ctx.beginPath(); ctx.ellipse(ex, eyeY + ry * 0.2, rx * 0.2, ry * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = mix(P.skin, -0.16); ctx.beginPath(); ctx.ellipse(ex, eyeY - ry * 0.08, rx * 0.22, ry * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ece2d2'; ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.17, ry * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+        const iris = ctx.createRadialGradient(ex, eyeY, 1, ex, eyeY, rx * 0.1);
+        iris.addColorStop(0, '#9a7249'); iris.addColorStop(0.6, '#5c4024'); iris.addColorStop(1, '#2a1c10');
+        ctx.fillStyle = iris; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.085, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#0b0e13'; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.04, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.beginPath(); ctx.arc(ex - rx * 0.03, eyeY - ry * 0.05, rx * 0.02, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,170,70,.35)'; ctx.fillRect(ex - rx * 0.12, eyeY + ry * 0.07, rx * 0.24, ry * 0.025);
+        ctx.strokeStyle = mix(P.skin, -0.35); ctx.lineWidth = px * 0.26; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(ex - rx * 0.2, eyeY - ry * 0.02); ctx.quadraticCurveTo(ex, eyeY - ry * 0.24, ex + rx * 0.2, eyeY - ry * 0.06); ctx.stroke();
+        const inX = ex - sx * rx * 0.1, inY = eyeY - ry * 0.55, outX = ex + sx * rx * 0.3, outY = eyeY - ry * 0.68;
+        const midX = (inX + outX) / 2, midY = (inY + outY) / 2 - ry * 0.04;
+        ctx.fillStyle = P.hairSh;
+        ctx.beginPath(); ctx.moveTo(inX, inY - ry * 0.08); ctx.quadraticCurveTo(midX, midY - ry * 0.08, outX, outY - ry * 0.06);
+        ctx.quadraticCurveTo(midX, midY + ry * 0.08, inX, inY + ry * 0.06); ctx.closePath(); ctx.fill();
+      }
+      const nx = cx + rx * 0.02, nTop = cy - ry * 0.3, nBot = cy + ry * 0.6;
+      ctx.beginPath(); ctx.moveTo(nx - rx * 0.06, nTop); ctx.lineTo(nx - rx * 0.15, nBot - ry * 0.1);
+      ctx.quadraticCurveTo(nx - rx * 0.03, nBot + ry * 0.08, nx + rx * 0.13, nBot - ry * 0.1); ctx.lineTo(nx + rx * 0.07, nTop); ctx.closePath();
+      const noseGrad = ctx.createLinearGradient(nx - rx * 0.15, 0, nx + rx * 0.15, 0);
+      noseGrad.addColorStop(0, mix(P.skin, 0.3)); noseGrad.addColorStop(0.5, P.skin); noseGrad.addColorStop(1, mix(P.skin, -0.45));
+      ctx.fillStyle = noseGrad; ctx.fill();
+      ctx.fillStyle = mix(P.skin, -0.45);
+      for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(nx + sx * rx * 0.12, nBot, rx * 0.05, 0, Math.PI * 2); ctx.fill(); }
+      const my = cy + ry * 0.7;
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.24, my + ry * 0.05); ctx.quadraticCurveTo(cx, my - ry * 0.12, cx + rx * 0.24, my + ry * 0.05);
+      ctx.quadraticCurveTo(cx, my + ry * 0.2, cx - rx * 0.24, my + ry * 0.05); ctx.closePath();
+      ctx.fillStyle = mix(P.mouth, -0.3); ctx.fill();
+      ctx.fillStyle = mix(P.mouth, 0.15); ctx.beginPath(); ctx.ellipse(cx, my + ry * 0.15, rx * 0.18, ry * 0.06, 0, 0, Math.PI * 2); ctx.fill();
+      const seamX = cx + rx * 0.14;
+      ctx.strokeStyle = 'rgba(10,8,6,.5)'; ctx.lineWidth = rx * 0.07; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(seamX - rx * 0.05, cy - ry * 0.95); ctx.quadraticCurveTo(seamX + rx * 0.06, cy + ry * 0.1, seamX, cy + ry * 1.15); ctx.stroke();
+      ctx.strokeStyle = mix(P.cyborgScreen, -0.1); ctx.lineWidth = rx * 0.025;
+      ctx.beginPath(); ctx.moveTo(seamX - rx * 0.05, cy - ry * 0.95); ctx.quadraticCurveTo(seamX + rx * 0.06, cy + ry * 0.1, seamX, cy + ry * 1.15); ctx.stroke();
+      for (const t of [0.15, 0.45, 0.75]) { const sy = cy - ry * 0.95 + t * (ry * 2.1); ctx.fillStyle = P.cyborgScreen; ctx.beginPath(); ctx.arc(seamX, sy, rx * 0.02, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cx + rx * 0.5, cy - ry * 1.05);
+      ctx.quadraticCurveTo(cx + rx * 1.3, cy - ry * 1.15, cx + rx * 1.35, cy - ry * 0.3);
+      ctx.quadraticCurveTo(cx + rx * 1.32, cy + ry * 0.55, cx + rx * 0.62, cy + ry * 0.5);
+      ctx.quadraticCurveTo(cx + rx * 0.78, cy - ry * 0.3, cx + rx * 0.5, cy - ry * 1.05);
+      ctx.closePath();
+      const shell = ctx.createLinearGradient(cx + rx * 0.6, cy - ry, cx + rx * 1.3, cy + ry * 0.4);
+      shell.addColorStop(0, mix(P.cyborgShell, 0.18)); shell.addColorStop(1, mix(P.cyborgShell, -0.25));
+      ctx.fillStyle = shell; ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + rx * 0.82, cy - ry * 0.8); ctx.quadraticCurveTo(cx + rx * 1.18, cy - ry * 0.78, cx + rx * 1.2, cy - ry * 0.1);
+      ctx.quadraticCurveTo(cx + rx * 1.16, cy + ry * 0.2, cx + rx * 0.84, cy + ry * 0.18); ctx.closePath();
+      ctx.fillStyle = '#0c1210'; ctx.fill();
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = i === 1 ? P.cyborgScreen : mix(P.cyborgScreen, -0.3); ctx.fillRect(cx + rx * 0.87, cy - ry * (0.68 - i * 0.22), rx * 0.28, ry * 0.1); }
+      ctx.fillStyle = P.cyborgScreen;
+      ctx.beginPath(); ctx.arc(cx + rx * 0.93, cy + ry * 0.02, rx * 0.025, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + rx * 1.02, cy + ry * 0.02, rx * 0.025, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = mix(P.cyborgShell, -0.4); ctx.lineWidth = rx * 0.025; ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(cx + rx * (0.68 + i * 0.07), cy + ry * 0.3); ctx.lineTo(cx + rx * (0.68 + i * 0.07), cy + ry * 0.42); ctx.stroke(); }
+      const port = ctx.createRadialGradient(cx + rx * 0.68, cy + ry * 0.33, 0, cx + rx * 0.68, cy + ry * 0.33, rx * 0.09);
+      port.addColorStop(0, P.cyborgScreen); port.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = port; ctx.beginPath(); ctx.arc(cx + rx * 0.68, cy + ry * 0.33, rx * 0.09, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      for (let i = 0; i < 3; i++) {
+        const jy = cy + ry * (0.5 + i * 0.34);
+        ctx.beginPath();
+        ctx.moveTo(cx + rx * (0.42 - i * 0.06), jy); ctx.lineTo(cx + rx * (0.92 - i * 0.12), jy - ry * 0.1);
+        ctx.lineTo(cx + rx * (0.88 - i * 0.12), jy + ry * 0.26); ctx.lineTo(cx + rx * (0.36 - i * 0.06), jy + ry * 0.3); ctx.closePath();
+        ctx.fillStyle = i === 1 ? P.cyborgScreen : mix(P.cyborgDark, i === 0 ? 0.08 : -0.1);
+        ctx.globalAlpha = i === 1 ? 0.85 : 1; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = mix(P.cyborgDark, -0.4); ctx.lineWidth = rx * 0.015; ctx.stroke();
+        ctx.fillStyle = P.metal; ctx.beginPath(); ctx.arc(cx + rx * (0.75 - i * 0.1), jy + ry * 0.08, rx * 0.025, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = mix(P.cyborgDark, -0.3); ctx.lineWidth = rx * 0.045; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx + rx * 0.55, cy + ry * 1.35); ctx.quadraticCurveTo(cx + rx * 0.4, cy + ry * 1.7, cx + rx * 0.35, cy + ry * 2.1); ctx.stroke();
+      ctx.fillStyle = P.cyborgScreen; ctx.beginPath(); ctx.arc(cx + rx * 0.35, cy + ry * 2.1, rx * 0.05, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      poseFaceOverlay(ctx, px, P, P.__pose, my);
+    }
+    const DWIGHT = {
+      skin: '#e3b088', skinSh: '#c4906a', hair: '#262628', hairSh: '#141416',
+      jacket: '#4b5245', jacketSh: '#33382f', jacketHi: '#6b7560', tshirt: '#8a9099', tshirtSh: '#5f6670',
+      pants: '#33363f', pantsSh: '#20222a', shoe: '#2a2c30', shoeSh: '#17181b', sole: '#454850',
+      accent: '#ff9a3c', mouth: '#8a5a48', metal: '#c7ccd3', belt: '#1a1510',
+      cyborgDark: '#2a2e33', cyborgShell: '#5b4a66', cyborgScreen: '#3ad9b0',
+    };
+
+    // ---- Pam ----
+    function buildDollPam(P, pose) {
+      const b = [];
+      row(b, 0, [[7, 6, P.hair]]); row(b, 1, [[5, 10, P.hair]]); row(b, 2, [[4, 12, P.hair]]);
+      row(b, 3, [[2, 3, P.hairSh], ...seg(5, 10, P.skin, P.skinSh), [15, 3, P.hair]]);
+      row(b, 4, [[2, 2, P.hairSh], ...seg(4, 12, P.skin, P.skinSh), [16, 2, P.hair]]);
+      row(b, 5, [[2, 1, P.hair], ...seg(3, 14, P.skin, P.skinSh), [17, 1, P.hairSh]]);
+      row(b, 6, seg(2, 16, P.skin, P.skinSh, 3)); row(b, 7, seg(4, 12, P.skin, P.skinSh, 3));
+      row(b, 8, seg(5, 10, P.skin, P.skinSh, 3)); row(b, 9, seg(6, 8, P.skin, P.skinSh, 2));
+      row(b, 10, seg(7, 6, P.skin, P.skinSh, 2));
+      const torso = [[11, 3, 13], [12, 3, 13], [13, 4, 12], [14, 4, 11], [15, 5, 10], [16, 5, 9], [17, 6, 8], [18, 6, 8]];
+      for (const [y, x, w] of torso) row(b, y, seg(x, w, P.cardigan, P.cardiganSh, 2));
+      for (let y = 12; y <= 18; y++) row(b, y, seg(8, 3, P.blouse, P.blouseSh, 1));
+      b.push({ x: 4, y: 11, w: 1, h: 1, color: P.accent }); b.push({ x: 14, y: 11, w: 1, h: 1, color: P.accent });
+      for (const [y, segs] of poseHands(pose, P)) row(b, y, segs);
+      for (let y = 19; y <= 25; y++) { row(b, y, seg(6, 4, P.pants, P.pantsSh, 2)); row(b, y, seg(11, 4, P.pants, P.pantsSh, 2)); }
+      for (let y = 26; y <= 29; y++) { row(b, y, seg(6, 4, P.shoe, P.shoeSh, 2)); row(b, y, seg(11, 4, P.shoe, P.shoeSh, 2)); }
+      return { blocks: b };
+    }
+    function buildDoll2xPam(P, pose) {
+      const blocks = scaleBlocks(buildDollPam(P, pose).blocks, 2);
+      blocks.push({ x: 4, y: 9, w: 2, h: 4, color: P.skinSh }); blocks.push({ x: 34, y: 9, w: 2, h: 4, color: P.skinSh });
+      blocks.push({ x: 35, y: 7, w: 2, h: 7, color: '#e8b64a' }); blocks.push({ x: 35, y: 6, w: 2, h: 1, color: '#2a2a2e' });
+      const fine = [];
+      fine.push({ x: 14, y: 24, w: 1, h: 14, color: P.cardiganHi }); fine.push({ x: 22, y: 24, w: 1, h: 14, color: P.cardiganHi });
+      for (let y = 26; y <= 36; y += 5) fine.push({ x: 18, y, w: 2, h: 2, color: P.accent });
+      fine.push({ x: 9, y: 31, w: 6, h: 5, color: P.cardiganHi }); fine.push({ x: 10, y: 32, w: 4, h: 3, color: P.cardiganSh });
+      fine.push({ x: 11, y: 29, w: 1, h: 4, color: P.accent });
+      fine.push({ x: 9, y: 30, w: 5, h: 2, color: P.cardiganSh }); fine.push({ x: 24, y: 30, w: 5, h: 2, color: P.cardiganSh });
+      fine.push({ x: 12, y: 37, w: 16, h: 1, color: P.cardiganHi });
+      fine.push({ x: 14, y: 38, w: 12, h: 1, color: P.cardiganSh });
+      fine.push({ x: 13, y: 55, w: 6, h: 1, color: P.accent }); fine.push({ x: 23, y: 55, w: 6, h: 1, color: P.accent });
+      fine.push({ x: 12, y: 59, w: 8, h: 1, color: P.shoeSh }); fine.push({ x: 22, y: 59, w: 8, h: 1, color: P.shoeSh });
+      return { blocks, fine };
+    }
+    function paintFacePam(ctx, px, P) {
+      const cx = 20 * px, cy = 10.5 * px, rx = 11 * px, ry = 5.5 * px;
+      ctx.save(); ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.clip();
+      const base = ctx.createRadialGradient(cx - rx * 0.4, cy - ry * 0.6, rx * 0.15, cx, cy, rx * 1.4);
+      base.addColorStop(0, mix(P.skin, 0.22)); base.addColorStop(0.5, P.skin); base.addColorStop(1, mix(P.skin, -0.22));
+      ctx.fillStyle = base; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      const hot = ctx.createRadialGradient(cx - rx * 0.1, cy - ry * 0.5, 0, cx - rx * 0.1, cy - ry * 0.5, rx * 0.6);
+      hot.addColorStop(0, 'rgba(255,240,215,.3)'); hot.addColorStop(1, 'rgba(255,240,215,0)');
+      ctx.fillStyle = hot; ctx.fillRect(cx - rx * 1.5, cy - ry * 1.5, rx * 3, ry * 3);
+      for (const sx of [-1, 1]) {
+        const bx = cx + sx * rx * 0.5, by = cy + ry * 0.3;
+        const bg = ctx.createRadialGradient(bx, by, 1, bx, by, rx * 0.28);
+        bg.addColorStop(0, 'rgba(242,140,150,.3)'); bg.addColorStop(1, 'rgba(242,140,150,0)');
+        ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(bx, by, rx * 0.28, 0, Math.PI * 2); ctx.fill();
+      }
+      const eyeY = cy - ry * 0.05;
+      for (const sx of [-1, 1]) {
+        const ex = cx + sx * rx * 0.4;
+        ctx.fillStyle = '#ece2d2'; ctx.beginPath(); ctx.ellipse(ex, eyeY, rx * 0.19, ry * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+        const iris = ctx.createRadialGradient(ex, eyeY, 1, ex, eyeY, rx * 0.11);
+        iris.addColorStop(0, '#8fae5c'); iris.addColorStop(0.6, '#55713a'); iris.addColorStop(1, '#2c3a1e');
+        ctx.fillStyle = iris; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.095, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#10151c'; ctx.beginPath(); ctx.arc(ex, eyeY, rx * 0.04, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.arc(ex - rx * 0.03, eyeY - ry * 0.05, rx * 0.025, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = mix(P.skin, -0.3); ctx.lineWidth = px * 0.22; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(ex - rx * 0.19, eyeY - ry * 0.08); ctx.quadraticCurveTo(ex, eyeY - ry * 0.3, ex + rx * 0.19, eyeY - ry * 0.1); ctx.stroke();
+        const inX = ex - sx * rx * 0.08, inY = eyeY - ry * 0.52, outX = ex + sx * rx * 0.28, outY = eyeY - ry * 0.68;
+        const midX = (inX + outX) / 2, midY = (inY + outY) / 2 - ry * 0.06;
+        ctx.fillStyle = P.hairSh;
+        ctx.beginPath(); ctx.moveTo(inX, inY - ry * 0.07); ctx.quadraticCurveTo(midX, midY - ry * 0.07, outX, outY - ry * 0.05);
+        ctx.quadraticCurveTo(midX, midY + ry * 0.07, inX, inY + ry * 0.05); ctx.closePath(); ctx.fill();
+      }
+      ctx.strokeStyle = '#2a2a2e'; ctx.lineWidth = px * 0.16; ctx.lineCap = 'round';
+      for (const sx of [-1, 1]) { ctx.beginPath(); ctx.ellipse(cx + sx * rx * 0.4, eyeY, rx * 0.26, ry * 0.2, 0, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.14, eyeY - ry * 0.02); ctx.lineTo(cx + rx * 0.14, eyeY - ry * 0.02); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + rx * 0.66, eyeY - ry * 0.04); ctx.lineTo(cx + rx * 0.85, eyeY - ry * 0.16); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.1)';
+      for (const sx of [-1, 1]) { ctx.beginPath(); ctx.ellipse(cx + sx * rx * 0.4, eyeY, rx * 0.24, ry * 0.18, 0, 0, Math.PI * 2); ctx.fill(); }
+      const nx = cx + rx * 0.01, nTop = cy - ry * 0.25, nBot = cy + ry * 0.5;
+      ctx.beginPath(); ctx.moveTo(nx - rx * 0.05, nTop); ctx.lineTo(nx - rx * 0.1, nBot - ry * 0.08);
+      ctx.quadraticCurveTo(nx - rx * 0.02, nBot + ry * 0.06, nx + rx * 0.09, nBot - ry * 0.08); ctx.lineTo(nx + rx * 0.05, nTop); ctx.closePath();
+      const noseGrad = ctx.createLinearGradient(nx - rx * 0.1, 0, nx + rx * 0.1, 0);
+      noseGrad.addColorStop(0, mix(P.skin, 0.25)); noseGrad.addColorStop(0.5, P.skin); noseGrad.addColorStop(1, mix(P.skin, -0.3));
+      ctx.fillStyle = noseGrad; ctx.fill();
+      ctx.fillStyle = mix(P.skin, -0.35);
+      for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(nx + sx * rx * 0.09, nBot, rx * 0.035, 0, Math.PI * 2); ctx.fill(); }
+      const my = cy + ry * 0.65;
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.24, my); ctx.quadraticCurveTo(cx, my + ry * 0.32, cx + rx * 0.24, my);
+      ctx.quadraticCurveTo(cx, my + ry * 0.12, cx - rx * 0.24, my); ctx.closePath();
+      ctx.fillStyle = mix(P.mouth, -0.15); ctx.fill();
+      ctx.fillStyle = mix(P.mouth, 0.3); ctx.beginPath(); ctx.ellipse(cx, my + ry * 0.1, rx * 0.16, ry * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      const bunCx = cx - rx * 0.05, bunCy = ry * 0.55;
+      const bun = ctx.createRadialGradient(bunCx - rx * 0.1, bunCy - ry * 0.15, rx * 0.05, bunCx, bunCy, rx * 0.4);
+      bun.addColorStop(0, mix(P.hair, 0.2)); bun.addColorStop(1, mix(P.hair, -0.25));
+      ctx.fillStyle = bun; ctx.beginPath(); ctx.ellipse(bunCx, bunCy, rx * 0.38, ry * 0.72, -0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = mix(P.hair, 0.15); ctx.lineWidth = px * 0.14; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(bunCx - rx * 0.3, bunCy + ry * 0.2); ctx.quadraticCurveTo(bunCx - rx * 0.5, bunCy + ry * 0.5, bunCx - rx * 0.4, bunCy + ry * 0.9); ctx.stroke();
+      ctx.strokeStyle = P.accent; ctx.lineWidth = px * 0.3;
+      ctx.beginPath(); ctx.ellipse(bunCx, bunCy + ry * 0.55, rx * 0.3, ry * 0.18, -0.05, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      poseFaceOverlay(ctx, px, P, P.__pose, my);
+    }
+    const PAM = {
+      skin: '#f0c49a', skinSh: '#d9a271', hair: '#6b3d2e', hairSh: '#4a2a1f',
+      cardigan: '#b5607d', cardiganSh: '#8a4460', cardiganHi: '#d98aa5', blouse: '#f3ead9', blouseSh: '#d9cdb8',
+      pants: '#4a4440', pantsSh: '#332e2b', shoe: '#8a5a42', shoeSh: '#5e3b2a',
+      mouth: '#c9596e', accent: '#ff4fa3',
+    };
+
+    // ---- Ralph (отдельная решётка 48×34, своя сторона-вид) ----
+    const RGRID = 48, RROWS = 34;
+    function buildDollRalph(P) {
+      const b = [];
+      row(b, 0, [[22, 2, P.black], [30, 2, P.black]]);
+      row(b, 1, [[21, 3, P.black], [29, 3, P.black]]);
+      row(b, 2, [[21, 1, P.black], [22, 1, P.furIn], [29, 1, P.furIn], [30, 1, P.black]]);
+      row(b, 3, [[20, 4, P.fur], [28, 4, P.fur]]);
+      row(b, 4, seg(19, 14, P.fur, P.furSh, 2)); row(b, 5, seg(18, 16, P.fur, P.furSh, 2)); row(b, 6, seg(18, 17, P.fur, P.furSh, 2));
+      row(b, 7, [...seg(17, 10, P.fur, P.furSh, 2), [27, 7, P.white]]);
+      row(b, 8, [...seg(17, 9, P.fur, P.furSh, 2), [26, 9, P.white]]);
+      row(b, 9, [...seg(18, 8, P.fur, P.furSh, 2), [26, 10, P.white]]);
+      row(b, 10, [...seg(19, 6, P.fur, P.furSh, 1), [25, 11, P.white]]);
+      row(b, 11, [[20, 5, P.fur], [25, 11, P.white]]);
+      row(b, 12, [[21, 4, P.fur], [25, 10, P.white]]);
+      row(b, 13, [[22, 3, P.fur], [25, 8, P.white]]);
+      row(b, 6, [[10, 2, P.fur]]); row(b, 7, [[8, 3, P.fur]]); row(b, 8, [[7, 4, P.fur]]); row(b, 9, [[6, 5, P.fur]]);
+      row(b, 10, [[5, 5, P.fur]]); row(b, 11, [[5, 6, P.fur]]); row(b, 12, [[5, 7, P.white]]); row(b, 13, [[6, 7, P.white]]);
+      for (let y = 13; y <= 22; y++) {
+        const t = (y - 13) / 9; const top = 11 + Math.round(t * 2); const full = 24 - Math.round(t * 2);
+        row(b, y, y <= 16 ? [[top, full, P.black]] : seg(top, full, P.fur, P.furSh, 2));
+      }
+      for (let y = 19; y <= 23; y++) row(b, y, [[14, 16, P.white]]);
+      for (let y = 24; y <= 29; y++) row(b, y, [[11, 3, P.furSh], [15, 4, P.fur], [25, 3, P.furSh], [29, 4, P.fur]]);
+      for (let y = 28; y <= 29; y++) row(b, y, [[11, 3, P.white], [15, 4, P.white], [25, 3, P.white], [29, 4, P.white]]);
+      return { blocks: b };
+    }
+    function buildDoll2xRalph(P) {
+      const blocks = buildDollRalph(P).blocks;
+      const fine = [];
+      fine.push({ x: 24, y: 13, w: 3, h: 2, color: P.accent }); fine.push({ x: 24, y: 15, w: 1, h: 3, color: P.accent });
+      fine.push({ x: 22, y: 17, w: 5, h: 4, color: '#15171a' }); fine.push({ x: 23, y: 18, w: 3, h: 2, color: P.accent });
+      return { blocks, fine };
+    }
+    function paintFaceRalph(ctx, px, P) {
+      const hx = 34 * px, hy = 9 * px;
+      ctx.save(); ctx.beginPath(); ctx.ellipse(hx, hy, 13 * px, 10 * px, 0, 0, Math.PI * 2); ctx.clip();
+      const hot = ctx.createRadialGradient(hx - 4 * px, hy - 4 * px, 1, hx - 4 * px, hy - 4 * px, 14 * px);
+      hot.addColorStop(0, 'rgba(255,235,210,.3)'); hot.addColorStop(1, 'rgba(255,235,210,0)');
+      ctx.fillStyle = hot; ctx.fillRect(hx - 16 * px, hy - 16 * px, 32 * px, 32 * px);
+      const sideSh = ctx.createLinearGradient(hx, hy - 8 * px, hx, hy + 10 * px);
+      sideSh.addColorStop(0, 'rgba(0,0,0,0)'); sideSh.addColorStop(1, 'rgba(20,12,6,.3)');
+      ctx.fillStyle = sideSh; ctx.fillRect(hx - 16 * px, hy - 16 * px, 32 * px, 32 * px);
+      const ex = 29 * px, ey = 9 * px;
+      ctx.fillStyle = mix(P.fur, -0.35); ctx.beginPath(); ctx.ellipse(ex, ey, 1.6 * px, 1.3 * px, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1a140f'; ctx.beginPath(); ctx.ellipse(ex + 0.2 * px, ey, 1.1 * px, 1.1 * px, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.beginPath(); ctx.arc(ex - 0.2 * px, ey - 0.35 * px, 0.35 * px, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = mix(P.white, -0.12); ctx.beginPath(); ctx.ellipse(37 * px, 11.5 * px, 4 * px, 2.4 * px, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#20140f'; ctx.beginPath(); ctx.ellipse(40.5 * px, 11.3 * px, 1.3 * px, 1 * px, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#e07a82';
+      ctx.beginPath(); ctx.moveTo(37.5 * px, 13.2 * px); ctx.quadraticCurveTo(37 * px, 16 * px, 38.2 * px, 16.4 * px);
+      ctx.quadraticCurveTo(39 * px, 15.5 * px, 38.3 * px, 13 * px); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    const RALPH = { fur: '#d97b3f', furSh: '#a85a2a', furIn: '#8a4a2a', white: '#f5ecd9', black: '#2a2420', accent: '#39ff88' };
+
+    // ---- битмапы персонажей: строятся один раз, дальше только drawImage. Стол (раньше — такой же готовый
+    // битмап 100×60 с разрезом back/front под старую фронтальную сцену) в изометрической сцене больше НЕ
+    // нужен как битмап: стол теперь — дешёвая живая векторная отрисовка через isoBox() (см. drawIsoDesk
+    // ниже, перед drawWorld), которая и так пересчитывается по изометрической проекции каждый кадр
+    function buildCharacterBitmap(buildFn, paintFn, P, outline, pose) {
+      const S = 6;
+      const sup = document.createElement('canvas'); sup.width = GRID * S; sup.height = ROWS * S;
+      const sc = sup.getContext('2d');
+      renderBody(sc, buildFn(P, pose), S, outline);
+      paintFn(sc, S, Object.assign({}, P, { __pose: pose }));
+      const off = document.createElement('canvas'); off.width = GRID; off.height = ROWS;
+      const oc = off.getContext('2d'); oc.imageSmoothingEnabled = true; oc.imageSmoothingQuality = 'high';
+      oc.drawImage(sup, 0, 0, GRID, ROWS);
+      return off;
+    }
+    function buildRalphBitmap() {
+      const S = 6;
+      const sup = document.createElement('canvas'); sup.width = RGRID * S; sup.height = RROWS * S;
+      const sc = sup.getContext('2d');
+      renderBody(sc, buildDoll2xRalph(RALPH), S, '#2a1a10');
+      paintFaceRalph(sc, S, RALPH);
+      const off = document.createElement('canvas'); off.width = RGRID; off.height = RROWS;
+      const oc = off.getContext('2d'); oc.imageSmoothingEnabled = true; oc.imageSmoothingQuality = 'high';
+      oc.drawImage(sup, 0, 0, RGRID, RROWS);
+      return off;
+    }
+    const POSES = ['stand', 'type', 'lean', 'failed', 'done'];
+    const PEOPLE = {
+      michael: { build: buildDoll2xMichael, paint: paintFaceMichael, P: MICHAEL, outline: '#23160f' },
+      dwight: { build: buildDoll2xDwight, paint: paintFaceDwight, P: DWIGHT, outline: '#1c2420' },
+      pam: { build: buildDoll2xPam, paint: paintFacePam, P: PAM, outline: '#2e1420' },
+    };
+    // построение самих битмапов требует canvas/document — в тестовом окружении (node, без DOM, см. hasDOM
+    // выше) этого нет, а он лишь require()-ит модуль ради чистых экспортов, не рисуя кадр; поэтому держим
+    // BIG.sprites пустым без DOM, не роняя require() модуля
+    const sprites = {};
+    if (hasDOM) {
+      for (const name in PEOPLE) {
+        sprites[name] = {};
+        for (const pose of POSES) sprites[name][pose] = buildCharacterBitmap(PEOPLE[name].build, PEOPLE[name].paint, PEOPLE[name].P, PEOPLE[name].outline, pose);
+      }
+      sprites.ralph = buildRalphBitmap();
+    }
+
+    BIG.GRID = GRID; BIG.ROWS = ROWS; BIG.RGRID = RGRID; BIG.RROWS = RROWS;
+    BIG.sprites = sprites;
+    BIG.accents = { michael: MICHAEL.accent, dwight: DWIGHT.accent, pam: PAM.accent, ralph: RALPH.accent };
+    // поза по a.state — то же сопоставление, что в drawHuman()/STATE_TO_POSES теста, но здесь без
+    // раздельных type1/type2 (один кадр «печати» вместо чередования пальцев — анимация чуть беднее,
+    // такова цена разового построения битмапов вместо отрисовки вживую каждый кадр)
+    BIG.poseFor = (state) => {
+      if (state === 'working') return 'type';
+      if (state === 'review') return 'lean';
+      if (state === 'failed') return 'failed';
+      if (state === 'done') return 'done';
+      return 'stand';
+    };
+  })();
+
+  // ================================================================== ISO: изометрическая сцена-локация
+  // Полная замена прежней фронтальной сцены (панорамное окно + вид анфас) по просьбе пользователя —
+  // референс с видом сверху/под углом (top-down isometric cyberpunk-офис). Канва остаётся 768×432 (LW×LH,
+  // тесты это пином не трогают), поэтому вся геометрия подобрана под этот размер, а не скопирована из
+  // прототипа 1:1 (там холст был 1400×900). Персонажи — те же готовые фронтальные битмапы (BIG.sprites),
+  // просто вставленные как «билборды» в изометрию — так все игры с честной 3D/изо геометрией мебели и
+  // плоскими спрайтами персонажей и делают, иначе лицо (ради которого всё и затевалось) было бы не видно.
+  const ISO = {};
+  (function buildIso() {
+    const TW = 56, TH = 28, GRID = 7;
+    const originX = LW / 2, originY = 128;
+    const WALL_H = 100;
+    function iso(gx, gy, gz) {
+      gz = gz || 0;
+      return { x: originX + (gx - gy) * TW / 2, y: originY + (gx + gy) * TH / 2 - gz };
+    }
+    function isoMix(hex, amt) {
+      const n = parseInt(hex.slice(1), 16); const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      const f = c => Math.max(0, Math.min(255, amt >= 0 ? c + (255 - c) * amt : c * (1 + amt)));
+      return `rgb(${f(r) | 0},${f(g) | 0},${f(b) | 0})`;
+    }
+
+    ISO.iso = iso; ISO.GRID = GRID; ISO.WALL_H = WALL_H;
+    // раскладка станций на сетке пола: 1-2 колонки, без обхода препятствий (у сцены нет колонн/мебели,
+    // мешающих столам) — просто симметричный паркинг у задних стен
+    ISO.stationsFor = (n) => {
+      const cols = n <= 1 ? 1 : 2, rows = Math.ceil(n / cols);
+      const lo = 1.0, hi = GRID - 2.3;
+      const xs = cols === 1 ? [(lo + hi) / 2] : [lo, hi];
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const col = i % cols, r = Math.floor(i / cols);
+        const gy = rows === 1 ? (lo + hi) / 2 : lo + (hi - lo) * (r / (rows - 1 || 1));
+        out.push({ gx: xs[col], gy });
+      }
+      return out;
+    };
+    // пиксельная точка-якорь персонажа на полу (та же формула, что в drawBillboard) — используется как
+    // a.home.{x,y} для совместимости со всем остальным кодом (конверты/доска планирования/речевые
+    // пузыри/визиты котов — они все адресуются через a.home.x/y, без разницы, как эта точка вычислена)
+    ISO.anchorFor = (gx, gy) => iso(gx + 0.5, gy + 0.08, 0);
+
+    // ---- фон: ночной киберпанк-город вокруг здания (за стенами и под полом)
+    function drawCitySky() {
+      const g = o.createLinearGradient(0, 0, 0, LH);
+      g.addColorStop(0, '#0d0a1a'); g.addColorStop(0.6, '#140f24'); g.addColorStop(1, '#1a1428');
+      o.fillStyle = g; o.fillRect(0, 0, LW, LH);
+      const rand = (seed) => { const x = Math.sin(seed * 12.9898) * 43758.5453; return x - Math.floor(x); };
+      for (let i = 0; i < 30; i++) {
+        const left = i % 2 === 0;
+        const bw = 22 + rand(i) * 38;
+        const bx = left ? rand(i + 50) * (LW * 0.32) : LW - rand(i + 50) * (LW * 0.32) - bw;
+        const bh = 60 + rand(i + 99) * 230;
+        const by = LH - bh;
+        o.fillStyle = `rgba(${10 + rand(i) * 10 | 0},${8 + rand(i) * 8 | 0},${22 + rand(i) * 14 | 0},1)`;
+        o.fillRect(bx, by, bw, bh);
+        for (let wy = by + 4; wy < LH - 4; wy += 7) {
+          for (let wx = bx + 2; wx < bx + bw - 2; wx += 6) {
+            const r = rand(wx * 3.1 + wy * 7.7 + i);
+            if (r < 0.10) { o.fillStyle = 'rgba(255,217,160,.65)'; o.fillRect(wx, wy, 2, 3); }
+            else if (r < 0.14) { o.fillStyle = 'rgba(255,79,163,.5)'; o.fillRect(wx, wy, 2, 3); }
+            else if (r < 0.17) { o.fillStyle = 'rgba(120,220,255,.45)'; o.fillRect(wx, wy, 2, 3); }
+          }
+        }
+      }
+    }
+
+    // ---- здание под полом: фасад вдоль двух ПЕРЕДНИХ рёбер (задние уже закрыты стенами) — без этого
+    // пол выглядел бы плоской парящей картой, а не срезом настоящего здания
+    function drawBuildingFascia() {
+      const FH = 38;
+      const edges = [[iso(GRID, 0), iso(GRID, GRID)], [iso(0, GRID), iso(GRID, GRID)]];
+      const rand = (seed) => { const x = Math.sin(seed * 12.9898) * 43758.5453; return x - Math.floor(x); };
+      edges.forEach(([a, b], ei) => {
+        o.save();
+        o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(b.x, b.y); o.lineTo(b.x, b.y + FH); o.lineTo(a.x, a.y + FH); o.closePath();
+        const g = o.createLinearGradient(a.x, a.y, a.x, a.y + FH);
+        g.addColorStop(0, ei === 0 ? '#1b2030' : '#161b28'); g.addColorStop(1, '#0c0e16');
+        o.fillStyle = g; o.fill();
+        o.clip();
+        for (let i = 0; i < 12; i++) {
+          const t0 = i / 12, t1 = (i + 1) / 12;
+          const x0 = a.x + (b.x - a.x) * t0, y0 = a.y + (b.y - a.y) * t0;
+          const x1 = a.x + (b.x - a.x) * t1, y1 = a.y + (b.y - a.y) * t1;
+          const r = rand(i + ei * 50);
+          if (r < 0.4) {
+            o.fillStyle = r < 0.15 ? 'rgba(255,217,160,.5)' : 'rgba(120,180,255,.4)';
+            o.fillRect((x0 + x1) / 2 - 2, (y0 + y1) / 2 + 8 + rand(i + 9) * 12, 4, 5);
+          }
+        }
+        o.strokeStyle = 'rgba(140,170,220,.3)'; o.lineWidth = 2;
+        o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(b.x, b.y); o.stroke();
+        o.restore();
+      });
+    }
+    function drawDepthHaze() {
+      const a = iso(GRID, GRID);
+      const g = o.createLinearGradient(0, a.y + 30, 0, a.y + 100);
+      g.addColorStop(0, 'rgba(10,9,18,0)'); g.addColorStop(1, 'rgba(10,9,18,.75)');
+      o.fillStyle = g; o.fillRect(0, a.y + 30, LW, 100);
+    }
+
+    // ---- задние стены (левая вдоль gy=0, правая вдоль gx=0) — сходятся в угол над вывеской
+    function drawBackWalls() {
+      const wallGrad = o.createLinearGradient(0, originY - WALL_H, 0, originY);
+      wallGrad.addColorStop(0, '#171b2a'); wallGrad.addColorStop(1, '#232a3d');
+      for (let gx = 0; gx < GRID; gx++) {
+        const b0 = iso(gx, 0), b1 = iso(gx + 1, 0);
+        const t0 = { x: b0.x, y: b0.y - WALL_H }, t1 = { x: b1.x, y: b1.y - WALL_H };
+        o.beginPath(); o.moveTo(b0.x, b0.y); o.lineTo(b1.x, b1.y); o.lineTo(t1.x, t1.y); o.lineTo(t0.x, t0.y); o.closePath();
+        o.fillStyle = wallGrad; o.fill(); o.strokeStyle = 'rgba(0,0,0,.35)'; o.lineWidth = 1; o.stroke();
+      }
+      const wallGrad2 = o.createLinearGradient(0, originY - WALL_H, 0, originY);
+      wallGrad2.addColorStop(0, '#11141f'); wallGrad2.addColorStop(1, '#1b2030');
+      for (let gy = 0; gy < GRID; gy++) {
+        const b0 = iso(0, gy), b1 = iso(0, gy + 1);
+        const t0 = { x: b0.x, y: b0.y - WALL_H }, t1 = { x: b1.x, y: b1.y - WALL_H };
+        o.beginPath(); o.moveTo(b0.x, b0.y); o.lineTo(b1.x, b1.y); o.lineTo(t1.x, t1.y); o.lineTo(t0.x, t0.y); o.closePath();
+        o.fillStyle = wallGrad2; o.fill(); o.strokeStyle = 'rgba(0,0,0,.35)'; o.lineWidth = 1; o.stroke();
+      }
+    }
+    function wallWindow(gx0, gy0, side, w, h, yOff, color, bright) {
+      const b = side === 'left' ? iso(gx0, 0) : iso(0, gy0);
+      const b2 = side === 'left' ? iso(gx0 + w, 0) : iso(0, gy0 + w);
+      const topY = b.y - WALL_H + yOff;
+      const dx = (b2.x - b.x), dy = (b2.y - b.y);
+      const x0 = b.x + dx * 0.12, y0 = topY + dy * 0.12;
+      const x1 = b.x + dx * 0.88, y1 = topY + dy * 0.88;
+      const xm = (x0 + x1) / 2, ym = (y0 + y1) / 2;
+      o.save();
+      o.beginPath(); o.moveTo(x0, y0); o.lineTo(x1, y1); o.lineTo(x1, y1 + h); o.lineTo(x0, y0 + h); o.closePath();
+      const g = o.createLinearGradient(x0, y0, x0, y0 + h);
+      g.addColorStop(0, isoMix(color, 0.3 * bright)); g.addColorStop(1, isoMix(color, -0.3));
+      o.fillStyle = g; o.fill(); o.strokeStyle = 'rgba(5,6,10,.7)'; o.lineWidth = 2; o.stroke();
+      o.strokeStyle = 'rgba(5,6,10,.55)'; o.lineWidth = 1.5;
+      o.beginPath(); o.moveTo(xm, ym); o.lineTo(xm, ym + h); o.stroke();
+      if (bright > 0.75) {
+        o.save(); o.globalAlpha = 0.35; o.fillStyle = color;
+        o.beginPath(); o.moveTo(x0, y0); o.lineTo(x1, y1); o.lineTo(x1, y1 + h); o.lineTo(x0, y0 + h); o.closePath(); o.fill();
+        o.restore();
+      }
+      o.restore();
+    }
+    function drawWindows() {
+      const rand = (seed) => { const x = Math.sin(seed * 12.9898) * 43758.5453; return x - Math.floor(x); };
+      let i = 0;
+      for (let gx = 0; gx < GRID; gx += 2) wallWindow(gx, 0, 'left', 1.3, 26, 26, '#3a6fd8', 0.5 + rand(i++) * 0.6);
+      for (let gy = 0; gy < GRID; gy += 2) wallWindow(0, gy, 'right', 1.3, 26, 26, '#8a3ad8', 0.5 + rand(i++ + 99) * 0.6);
+    }
+    // трубы/кабели под потолком вдоль стен, со свисающими проводами-огоньками — заполняют верх кадра
+    function drawCeilingPipes() {
+      o.save();
+      for (const side of ['left', 'right']) {
+        const a = iso(0, 0);
+        const b = side === 'left' ? iso(GRID, 0) : iso(0, GRID);
+        const yOff = -WALL_H - 12;
+        o.strokeStyle = '#2a2f3e'; o.lineWidth = 5; o.lineCap = 'round';
+        o.beginPath(); o.moveTo(a.x, a.y + yOff); o.lineTo(b.x, b.y + yOff); o.stroke();
+        o.strokeStyle = '#3a4156'; o.lineWidth = 1.5;
+        o.beginPath(); o.moveTo(a.x, a.y + yOff - 2); o.lineTo(b.x, b.y + yOff - 2); o.stroke();
+        for (let i = 1; i < GRID; i += 2) {
+          const t = i / GRID;
+          const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t + yOff;
+          o.strokeStyle = 'rgba(40,46,60,.9)'; o.lineWidth = 1.5;
+          o.beginPath(); o.moveTo(px, py); o.lineTo(px, py + 10 + (i % 3) * 3); o.stroke();
+          o.fillStyle = i % 4 === 1 ? 'rgba(255,90,138,.9)' : 'rgba(120,220,255,.9)';
+          o.beginPath(); o.arc(px, py + 10 + (i % 3) * 3, 1.6, 0, Math.PI * 2); o.fill();
+        }
+      }
+      o.restore();
+    }
+    function drawSign() {
+      const p = iso(GRID / 2, 0);
+      const x = p.x, y = p.y - WALL_H - 10;
+      o.save();
+      o.font = '700 18px "Orbitron","Pixelify Sans",sans-serif';
+      o.textAlign = 'center'; o.textBaseline = 'middle';
+      o.shadowColor = '#ff5a8a'; o.shadowBlur = 12;
+      o.fillStyle = '#ff5a8a'; o.fillText('CYBER OFFICE', x, y);
+      o.shadowBlur = 0; o.restore();
+      o.save(); o.strokeStyle = 'rgba(255,90,138,.5)'; o.lineWidth = 1.5; o.strokeRect(x - 92, y - 13, 184, 26); o.restore();
+    }
+
+    // ---- пол: шахматная сетка ромбов + блеск + контактная тень у стен
+    const FLOOR_LINE = 'rgba(140,170,220,.14)';
+    function tilePath(gx, gy) {
+      const p0 = iso(gx, gy), p1 = iso(gx + 1, gy), p2 = iso(gx + 1, gy + 1), p3 = iso(gx, gy + 1);
+      o.beginPath(); o.moveTo(p0.x, p0.y); o.lineTo(p1.x, p1.y); o.lineTo(p2.x, p2.y); o.lineTo(p3.x, p3.y); o.closePath();
+    }
+    function drawFloor() {
+      for (let gy = 0; gy < GRID; gy++) for (let gx = 0; gx < GRID; gx++) {
+        tilePath(gx, gy); o.fillStyle = (gx + gy) % 2 ? TH.floor1 : TH.floor2; o.fill();
+        o.strokeStyle = FLOOR_LINE; o.lineWidth = 1; o.stroke();
+      }
+    }
+    function drawFloorSheen() {
+      o.save();
+      o.beginPath();
+      for (let gy = 0; gy < GRID; gy++) for (let gx = 0; gx < GRID; gx++) {
+        const p0 = iso(gx, gy), p1 = iso(gx + 1, gy), p2 = iso(gx + 1, gy + 1), p3 = iso(gx, gy + 1);
+        o.moveTo(p0.x, p0.y); o.lineTo(p1.x, p1.y); o.lineTo(p2.x, p2.y); o.lineTo(p3.x, p3.y); o.closePath();
+      }
+      o.clip();
+      const topC = iso(GRID / 2, 0), botC = iso(GRID, GRID);
+      const sheen = o.createLinearGradient(topC.x, topC.y, botC.x, botC.y);
+      sheen.addColorStop(0, 'rgba(160,190,255,.10)'); sheen.addColorStop(0.45, 'rgba(160,190,255,0)');
+      sheen.addColorStop(0.75, 'rgba(160,190,255,0)'); sheen.addColorStop(1, 'rgba(230,180,90,.08)');
+      o.fillStyle = sheen; o.fillRect(0, 0, LW, LH);
+      o.restore();
+    }
+    function drawWallBaseShadow() {
+      for (const [a, b] of [[iso(0, 0), iso(GRID, 0)], [iso(0, 0), iso(0, GRID)]]) {
+        o.save();
+        o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(b.x, b.y); o.lineTo(b.x, b.y + 16); o.lineTo(a.x, a.y + 16); o.closePath();
+        o.fillStyle = 'rgba(0,0,0,.32)'; o.fill();
+        o.restore();
+      }
+    }
+    function floorGlow(gx, gy, color, r) {
+      const p = iso(gx, gy);
+      const g = o.createRadialGradient(p.x, p.y, 2, p.x, p.y, r);
+      g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+      o.fillStyle = g; o.beginPath(); o.ellipse(p.x, p.y, r, r * 0.5, 0, 0, Math.PI * 2); o.fill();
+    }
+    function drawCeilingLamp(gx, gy) {
+      floorGlow(gx, gy, 'rgba(255,217,160,.35)', 42);
+      const p = iso(gx, gy, 0);
+      o.fillStyle = 'rgba(255,230,190,.9)'; o.beginPath(); o.arc(p.x, p.y, 3, 0, Math.PI * 2); o.fill();
+    }
+    function drawPlantTop(gx, gy) {
+      const p = iso(gx, gy, 0);
+      o.save();
+      o.fillStyle = 'rgba(0,0,0,.3)'; o.beginPath(); o.ellipse(p.x, p.y, 11, 5.5, 0, 0, Math.PI * 2); o.fill();
+      const potTop = iso(gx, gy, 11);
+      o.fillStyle = '#3a2f26'; o.beginPath(); o.ellipse(potTop.x, potTop.y, 7.5, 4, 0, 0, Math.PI * 2); o.fill();
+      for (const [dx, dy, r, col] of [[-4, -4, 11, '#2f6b45'], [4, -7, 12, '#357a4d'], [0, -11, 10, '#3f8a57'], [3, -3, 9, '#2a5f3d']]) {
+        const lp = iso(gx, gy, 11);
+        o.fillStyle = col; o.beginPath(); o.ellipse(lp.x + dx, lp.y + dy, r, r * 0.8, 0, 0, Math.PI * 2); o.fill();
+      }
+      o.restore();
+    }
+    function drawServerRack(gx, gy) {
+      isoBox(gx, gy, 0.46, 0.46, 0, 54, { top: '#2c3240', left: '#15171f', right: '#1e212b' });
+      const p = iso(gx + 0.23, gy + 0.0, 54);
+      for (let i = 0; i < 4; i++) {
+        o.fillStyle = i % 2 ? 'rgba(120,220,255,.9)' : 'rgba(255,90,138,.8)';
+        o.fillRect(p.x - 6, p.y - 6 - i * 6, 10, 3);
+      }
+    }
+    function drawEntrance() {
+      const corner = iso(GRID, GRID);
+      const doorW = 16, doorH = 42;
+      const cx = corner.x, baseY = corner.y;
+      o.save();
+      o.fillStyle = '#15171f';
+      o.beginPath();
+      o.moveTo(cx - doorW - 6, baseY + 5); o.lineTo(cx + doorW + 6, baseY + 5);
+      o.lineTo(cx + doorW + 6, baseY - doorH - 7); o.lineTo(cx - doorW - 6, baseY - doorH - 7);
+      o.closePath(); o.fill();
+      o.strokeStyle = 'rgba(230,180,90,.55)'; o.lineWidth = 1.5; o.stroke();
+      const glass = o.createLinearGradient(0, baseY - doorH, 0, baseY);
+      glass.addColorStop(0, 'rgba(120,170,220,.28)'); glass.addColorStop(1, 'rgba(70,110,160,.4)');
+      o.fillStyle = glass;
+      o.fillRect(cx - doorW, baseY - doorH, doorW * 2, doorH);
+      o.strokeStyle = 'rgba(230,180,90,.8)'; o.lineWidth = 1;
+      o.beginPath(); o.moveTo(cx, baseY - doorH); o.lineTo(cx, baseY); o.stroke();
+      o.shadowColor = 'rgba(230,180,90,.9)'; o.shadowBlur = 7;
+      o.beginPath(); o.moveTo(cx, baseY - doorH); o.lineTo(cx, baseY); o.stroke();
+      o.shadowBlur = 0;
+      o.restore();
+      floorGlow(GRID - 0.2, GRID - 0.2, 'rgba(230,180,90,.22)', 50);
+    }
+    function drawEntranceRunner() {
+      const a = iso(GRID - 0.5, GRID - 0.5, 1), b = iso(GRID / 2, GRID / 2, 2);
+      o.save();
+      o.strokeStyle = 'rgba(230,190,110,.35)'; o.lineWidth = 10; o.lineCap = 'round';
+      o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(b.x, b.y); o.stroke();
+      o.strokeStyle = 'rgba(255,220,160,.5)'; o.lineWidth = 1.5;
+      o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(b.x, b.y); o.stroke();
+      o.restore();
+    }
+    function drawCableHub(stationsList, accents) {
+      const hub = iso(GRID / 2, GRID / 2, 4);
+      for (const s of stationsList) {
+        const from = iso(s.gx + 0.5, s.gy + 0.3, 2);
+        o.save();
+        o.strokeStyle = accents[s.name]; o.globalAlpha = 0.35; o.lineWidth = 1.4;
+        o.beginPath();
+        o.moveTo(from.x, from.y);
+        o.quadraticCurveTo((from.x + hub.x) / 2, (from.y + hub.y) / 2 + 8, hub.x, hub.y);
+        o.stroke();
+        o.restore();
+      }
+      o.save();
+      const g = o.createRadialGradient(hub.x, hub.y, 1, hub.x, hub.y, 20);
+      g.addColorStop(0, 'rgba(180,210,255,.5)'); g.addColorStop(1, 'rgba(180,210,255,0)');
+      o.fillStyle = g; o.beginPath(); o.ellipse(hub.x, hub.y, 20, 10, 0, 0, Math.PI * 2); o.fill();
+      o.fillStyle = '#12151f'; o.beginPath(); o.ellipse(hub.x, hub.y, 12, 6, 0, 0, Math.PI * 2); o.fill();
+      o.strokeStyle = 'rgba(180,210,255,.8)'; o.lineWidth = 1.2;
+      o.beginPath(); o.ellipse(hub.x, hub.y, 9, 4.5, 0, 0, Math.PI * 2); o.stroke();
+      for (let i = 0; i < 4; i++) {
+        const a = (Math.PI / 2) * i;
+        o.beginPath(); o.moveTo(hub.x + Math.cos(a) * 4, hub.y + Math.sin(a) * 2); o.lineTo(hub.x + Math.cos(a) * 10, hub.y + Math.sin(a) * 5); o.stroke();
+      }
+      o.fillStyle = '#dfe8ff'; o.beginPath(); o.arc(hub.x, hub.y, 2.5, 0, Math.PI * 2); o.fill();
+      o.restore();
+    }
+
+    // ---- изометрическая коробка (стол/тумба) — заливка top/left/right граней по проекции iso()
+    function isoBox(gx, gy, gw, gh, gz0, gz1, colors) {
+      const top = [iso(gx, gy, gz1), iso(gx + gw, gy, gz1), iso(gx + gw, gy + gh, gz1), iso(gx, gy + gh, gz1)];
+      const frontL = [iso(gx, gy + gh, gz0), iso(gx + gw, gy + gh, gz0), iso(gx + gw, gy + gh, gz1), iso(gx, gy + gh, gz1)];
+      const frontR = [iso(gx + gw, gy, gz0), iso(gx + gw, gy + gh, gz0), iso(gx + gw, gy + gh, gz1), iso(gx + gw, gy, gz1)];
+      function poly(pts, fill) { o.beginPath(); o.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) o.lineTo(pts[i].x, pts[i].y); o.closePath(); o.fillStyle = fill; o.fill(); o.strokeStyle = 'rgba(0,0,0,.4)'; o.lineWidth = 1; o.stroke(); }
+      poly(frontL, colors.left); poly(frontR, colors.right); poly(top, colors.top);
+    }
+    // стол агента: столешница+монитор+клавиатура+лампа+мышь, живой векторной отрисовкой (дешевле, чем
+    // отдельный битмап под каждого — геометрия всё равно пересчитывается через iso() за кадр)
+    ISO.drawDesk = function (gx, gy, accent) {
+      isoBox(gx + 0.15, gy + 0.75, 0.5, 0.4, 0, 34, { top: '#262b3a', left: '#181b26', right: '#20242f' });
+      isoBox(gx + 0.15, gy + 0.68, 0.5, 0.12, 34, 70, { top: '#2e3446', left: '#1c2130', right: '#242a3a' });
+      isoBox(gx, gy, 1, 0.62, 0, 30, { top: '#4a3626', left: '#2c2015', right: '#39291c' });
+      isoBox(gx + 0.04, gy + 0.04, 0.92, 0.54, 30, 34, { top: '#5a4330', left: '#2c2015', right: '#39291c' });
+      for (const [lx, ly] of [[gx + 0.06, gy + 0.08], [gx + 0.9, gy + 0.08], [gx + 0.06, gy + 0.5], [gx + 0.9, gy + 0.5]]) {
+        isoBox(lx, ly, 0.06, 0.06, -4, 0, { top: '#1a130d', left: '#120d09', right: '#15100b' });
+      }
+      const base = iso(gx + 0.5, gy + 0.18, 34);
+      const topPt = iso(gx + 0.5, gy + 0.18, 34 + 46);
+      o.save();
+      o.strokeStyle = '#13151c'; o.lineWidth = 6; o.lineCap = 'round';
+      o.beginPath(); o.moveTo(base.x, base.y); o.lineTo(topPt.x, topPt.y); o.stroke();
+      const scr = o.createLinearGradient(topPt.x - 14, topPt.y - 16, topPt.x + 14, topPt.y + 16);
+      scr.addColorStop(0, isoMix(accent, 0.2)); scr.addColorStop(1, isoMix(accent, -0.3));
+      o.fillStyle = scr; o.fillRect(topPt.x - 15, topPt.y - 18, 30, 22);
+      o.shadowColor = accent; o.shadowBlur = 16; o.fillRect(topPt.x - 15, topPt.y - 18, 30, 22); o.shadowBlur = 0;
+      o.restore();
+      return { screenX: topPt.x - 15, screenY: topPt.y - 18, screenW: 30, screenH: 22 };
+    };
+
+    const BILLBOARD_PX = 1.0;
+    const DISPLAY_NAME = { michael: 'MICHAEL', dwight: 'DWIGHT', pam: 'PAM', ralph: 'RALPH' };
+    // персонаж как «билборд»: уже готовый фронтальный битмап (BIG.sprites) ставится в изо-сцену, подножием
+    // на пол у заднего края стола, лицом к зрителю — через стол, как ресепшионисты в референсе
+    ISO.drawBillboard = function (gx, gy, name, pose, accent, dir, breathe) {
+      const p = iso(gx + 0.5, gy + 0.08, 0);
+      o.save();
+      o.fillStyle = 'rgba(0,0,0,.35)';
+      o.beginPath(); o.ellipse(p.x, p.y, 22, 10, 0, 0, Math.PI * 2); o.fill();
+      o.restore();
+      const isRalph = name === 'ralph';
+      const spr = BIG.sprites[name];
+      const img = isRalph ? spr : (spr[pose] || spr.stand);
+      const gridW = isRalph ? BIG.RGRID : BIG.GRID, gridH = isRalph ? BIG.RROWS : BIG.ROWS;
+      const w = gridW * BILLBOARD_PX, h = gridH * BILLBOARD_PX;
+      o.save();
+      o.globalAlpha = 0.22;
+      const glow = o.createRadialGradient(p.x, p.y - h * 0.5, 4, p.x, p.y - h * 0.5, w * 0.85);
+      glow.addColorStop(0, accent); glow.addColorStop(1, 'rgba(0,0,0,0)');
+      o.fillStyle = glow; o.beginPath(); o.ellipse(p.x, p.y - h * 0.5, w * 0.85, h * 0.6, 0, 0, Math.PI * 2); o.fill();
+      o.restore();
+      o.imageSmoothingEnabled = false;
+      const dy = (breathe || 0) - (isRalph ? 14 : 0);
+      if (dir === -1) {
+        const x = Math.round(p.x - w / 2), y = Math.round(p.y - h + dy);
+        o.save(); o.translate(x * 2 + w, 0); o.scale(-1, 1);
+        o.drawImage(img, x, y, w, h);
+        o.restore();
+      } else {
+        o.drawImage(img, Math.round(p.x - w / 2), Math.round(p.y - h + dy), w, h);
+      }
+      return { x: p.x, y: p.y, name, accent };
+    };
+    ISO.drawNameplate = function (x, y, name, accent) {
+      o.save();
+      o.font = '700 10px "Segoe UI",monospace'; o.textAlign = 'center'; o.textBaseline = 'middle';
+      const label = DISPLAY_NAME[name] || name.toUpperCase();
+      const tw = Math.round(o.measureText(label).width) + 10;
+      o.fillStyle = 'rgba(8,9,14,.82)'; o.fillRect(x - tw / 2, y + 4, tw, 13);
+      o.strokeStyle = accent; o.globalAlpha = 0.7; o.lineWidth = 1; o.strokeRect(x - tw / 2 + 0.5, y + 4.5, tw - 1, 12);
+      o.globalAlpha = 1; o.fillStyle = '#e8ecf4'; o.fillText(label, x, y + 10.5);
+      o.restore();
+    };
+    // лёгкое «цветение» ярких источников — блюрим копии вывески/экранов и складываем в режиме lighter,
+    // имитируя bloom без честного постпроцессинга движка
+    ISO.drawBloomPass = function (draws) {
+      o.save();
+      o.globalCompositeOperation = 'lighter';
+      o.filter = 'blur(8px)';
+      o.globalAlpha = 0.5;
+      draws();
+      o.filter = 'none'; o.globalAlpha = 1; o.globalCompositeOperation = 'source-over';
+      o.restore();
+    };
+
+    ISO.drawScene = function () {
+      drawCitySky();
+      drawBuildingFascia();
+      drawDepthHaze();
+      drawBackWalls();
+      drawWindows();
+      drawCeilingPipes();
+      drawSign();
+      drawFloor();
+      drawEntranceRunner();
+      drawFloorSheen();
+      drawWallBaseShadow();
+      drawCeilingLamp(1.2, 5.4);
+      drawCeilingLamp(5.4, 1.2);
+      drawCeilingLamp(3.5, 3.5);
+      drawPlantTop(0.4, 6.2);
+      drawPlantTop(6.2, 0.4);
+      drawServerRack(0.2, 2.1);
+      drawServerRack(2.1, 0.2);
+      drawEntrance();
+    };
+    ISO.drawCableHub = drawCableHub;
+    ISO.drawSign = drawSign; // для повторного прохода bloom поверх готовой сцены
+  })();
+
+  // ---- старый рисованный этаж (arcade/gameboy) — та же геометрия, что и раньше, просто в мире 768×432;
+  // больше не вызывается из drawWorld (заменена ISO.drawScene), оставлена нетронутой как есть
   function drawLegacyBackground() {
     for (let y = 120; y < LH; y += 24) for (let x = 0; x < LW; x += 24) {
       o.fillStyle = ((x + y) / 24) % 2 ? TH.floor1 : TH.floor2; o.fillRect(x, y, 24, 24);
@@ -980,66 +1957,76 @@
   // «падение» конверта/документа на стол — первые MAIL_DROP_FRAMES кадров он опускается сверху, затем лежит неподвижно
   const MAIL_DROP_FRAMES = 12;
   function drawActors(t) {
+    o.imageSmoothingEnabled = false; // битмапы персонажей уже пикселизованы; без этого drawImage их размажет
     sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5)); // лежанка котов в углу
     // офисные коты, гуляющие по полу — до столов/подписей; коты в прыжке или уже на столе рисуются позже, поверх стола и человека
     drawCats(t, c => !c.jump && !c.onDesk);
     drawDog(t); // кибер-пёс всегда на полу — под стол не запрыгивает, только гуляет/сидит/лежит рядом
-    // столы (сначала — что позади человечка: стул, монитор), потом человечек, потом стол поверх ног;
-    // на cyberpunk-сцене та же геометрия перекрашена в палитру CY (CYBER_DESK/CHAIR/MONITOR_COLORS) —
-    // рабочие места агентов выглядят частью сцены, а не наложенным арт-стилем arcade/gameboy
     const cyber = THEME_NAME === 'cyberpunk';
+    const pending = []; // { a, hasBig, accent } — чтобы отрисовать персонажей отдельным проходом поверх столов
     for (const a of agents) {
-      const on = a.state === 'working';
       const failed = a.state === 'failed';
       const failBlink = Math.floor(t / 300) % 2 === 0;
-      sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), cyber ? CYBER_CHAIR_COLORS : null, HS);
-      let monitorRows = on ? MONITOR_ON : MONITOR_OFF, monitorColors = cyber ? CYBER_MONITOR_COLORS : null;
-      if (failed) { monitorRows = failBlink ? MONITOR_ON : MONITOR_OFF; monitorColors = MONITOR_FAIL_COLORS; }
-      sprite(monitorRows, a.home.x - S(10), a.home.y - S(44), monitorColors, HS);
-      if (on && !failed) { // «бегущие строчки» — три полосы мигают с разным периодом, имитируя скролл кода
-        o.fillStyle = cyber ? CY.neonBlue : '#9cc4ff';
-        if (Math.floor(t / 120) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(40), S(6), S(2));
-        if (Math.floor(t / 160) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(36), S(10), S(2));
-        if (Math.floor(t / 200) % 2) o.fillRect(a.home.x - S(6), a.home.y - S(32), S(4), S(2));
-      }
-      if (cyber && on) { // неоновое свечение экрана — пульсирует, как неоновый кант колонны/подсветка декоративного стола
-        const glow = 0.3 + 0.3 * Math.sin(t / 260 + a.home.x);
-        o.globalAlpha = glow; o.fillStyle = CY.neonBlue;
-        o.fillRect(a.home.x - S(12), a.home.y - S(46), S(24), S(4));
-        o.globalAlpha = 1;
-      }
-      if (failed && failBlink) { // красное свечение монитора вместо синего, пока моргает
-        o.globalAlpha = 0.5; o.fillStyle = '#ff4b4b';
-        o.fillRect(a.home.x - S(12), a.home.y - S(46), S(24), S(4));
-        o.globalAlpha = 1;
+      const hasBig = !!BIG.sprites[a.name] && a.home.gx != null; // michael/dwight/pam/ralph с местом в изо-сетке
+      const accent = BIG.accents[a.name] || a.color;
+      if (hasBig) {
+        const d = ISO.drawDesk(a.home.gx, a.home.gy, accent); // стол рисуется живой векторной изометрией
+        if (failed && failBlink) { o.globalAlpha = 0.55; o.fillStyle = '#ff4b4b'; o.fillRect(d.screenX, d.screenY, d.screenW, d.screenH); o.globalAlpha = 1; }
+        else if (a.state === 'working') {
+          const glow = 0.12 + 0.12 * Math.sin(t / 260 + a.home.x);
+          o.globalAlpha = glow; o.fillStyle = '#6fd9ff'; o.fillRect(d.screenX, d.screenY, d.screenW, d.screenH); o.globalAlpha = 1;
+        }
+      } else {
+        // неназванный агент без своего детального битмапа — старое плоское оформление стола (fallback)
+        sprite(CHAIR, a.home.x - S(4), a.home.y - S(6), cyber ? CYBER_CHAIR_COLORS : null, HS);
+        const on = a.state === 'working';
+        let monitorRows = on ? MONITOR_ON : MONITOR_OFF, monitorColors = cyber ? CYBER_MONITOR_COLORS : null;
+        if (failed) { monitorRows = failBlink ? MONITOR_ON : MONITOR_OFF; monitorColors = MONITOR_FAIL_COLORS; }
+        sprite(monitorRows, a.home.x - S(10), a.home.y - S(44), monitorColors, HS);
       }
       if (a.state === 'planning') {
-        sprite(BOARD, a.home.x - S(16), a.home.y - S(72), null, HS);
+        // билборд персонажа в изо-сцене заметно ниже, чем в прежней фронтальной (~60px против ~120px) —
+        // доска подвешена ближе к голове, чем раньше, но всё ещё явно выше нового, более компактного силуэта
+        sprite(BOARD, a.home.x - S(16), a.home.y - 80, null, HS);
         const glow = 0.25 + 0.25 * Math.sin(t / 500); // доска/голограмма подсвечивается, пока агент планирует
-        o.globalAlpha = glow; o.fillStyle = cyber ? CY.neonBlue : TH.win;
-        o.fillRect(a.home.x - S(16), a.home.y - S(74), S(32), S(4));
+        o.globalAlpha = glow; o.fillStyle = cyber ? CY.neonBlue : '#6fd9ff';
+        o.fillRect(a.home.x - S(16), a.home.y - 82, S(32), S(4));
         o.globalAlpha = 1;
       }
       if (a.mail) { // конверт/документ прилетел на стол — короткое падение сверху, затем лежит до конца life
         const spec = MAIL_SPECS[a.mail.kind];
         const dropped = Math.min(1, (spec.total - a.mail.life) / MAIL_DROP_FRAMES);
-        const yOff = -S(16) - Math.round((1 - dropped) * S(24));
-        sprite(spec.sprite, a.home.x + S(16), a.home.y + yOff, null, HS);
+        const yOff = -S(10) - Math.round((1 - dropped) * S(16));
+        sprite(spec.sprite, a.home.x + S(10), a.home.y + yOff, null, HS);
+      }
+      pending.push({ a, hasBig, accent });
+    }
+    const labels = [];
+    for (const { a, hasBig, accent } of pending) {
+      if (hasBig) {
+        const i = agents.indexOf(a);
+        const visitingCat = cats.find(c => c.deskGoal === a.name);
+        const dir = visitingCat ? visitingCat.deskSide : (a.state === 'idle' ? idleGlanceDir(t, i) : 1);
+        const breathe = a.state === 'idle' ? Math.round(Math.sin(t / 900 + i) * 1.2) : 0;
+        labels.push(ISO.drawBillboard(a.home.gx, a.home.gy, a.name, BIG.poseFor(a.state), accent, dir, breathe));
+      } else {
+        drawHuman(a, t); // фолбэк — старый плоский рендер
       }
     }
-    for (const a of agents) drawHuman(a, t);
-    for (const a of agents) sprite(DESK, a.home.x - S(28), a.home.y - S(8), cyber ? CYBER_DESK_COLORS : null, HS);
     // коты, запрыгнувшие на стол (или летящие туда/обратно) — поверх стола и человека
     drawCats(t, c => c.jump || c.onDesk);
-    // подписи
+    // таблички с именем — отдельным финальным проходом: если рисовать их сразу в ISO.drawBillboard,
+    // столб-монитор СОСЕДНЕГО (позже отрисованного) стола может лечь поверх чужой таблички
+    for (const l of labels) ISO.drawNameplate(l.x, l.y, l.name, l.accent);
+    // подписи состояния (имя для безымянных — отдельно, у именных его уже показывает табличка выше)
     o.font = '600 14px "Pixelify Sans", monospace'; o.textAlign = 'center'; o.textBaseline = 'top';
     const STATE_LABELS = { idle: 'свободен', working: 'работает', review: 'ждёт ревью', planning: 'планирует', failed: 'ошибка', done: 'готово' };
-    for (const a of agents) {
-      drawLabel(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6), TH.text);
-      o.font = '13px "Pixelify Sans", monospace';
-      drawLabel(STATE_LABELS[a.state] || a.state, a.home.x, a.home.y + S(24), TH.mute);
+    for (const { a, hasBig } of pending) {
+      if (!hasBig) { drawLabel(a.title.split('·')[0].trim(), a.home.x, a.home.y + S(6), TH.text); o.font = '13px "Pixelify Sans", monospace'; }
+      else o.font = '11px "Pixelify Sans", monospace';
+      drawLabel(STATE_LABELS[a.state] || a.state, a.home.x, a.home.y + (hasBig ? 18 : S(24)), TH.mute);
       o.font = '600 14px "Pixelify Sans", monospace';
-      if (a.speech) drawSpeechBubble(a.speech.text, a.home.x, a.home.y - S(78));
+      if (a.speech) drawSpeechBubble(a.speech.text, a.home.x, a.home.y - (hasBig ? 92 : 150));
     }
   }
 
@@ -1063,8 +2050,16 @@
       sprite(CAT_BED, Math.round(catBed.x - 7), Math.round(catBed.y - 5));
       return;
     }
-    if (THEME_NAME === 'cyberpunk') drawCyberBackground(t); else drawLegacyBackground();
+    // изометрическая сцена (ISO) — единая для всех тем, по референсу top-down cyberpunk-офиса;
+    // drawCyberBackground/drawLegacyBackground выше остаются в файле нетронутыми (на случай старого
+    // кода/тестов, которые могли бы к ним обращаться), но больше не вызываются отсюда
+    ISO.drawScene();
+    const accentsByName = {};
+    for (const a of agents) accentsByName[a.name] = BIG.accents[a.name] || a.color;
+    const isoStations = agents.filter(a => a.home.gx != null).map(a => ({ gx: a.home.gx, gy: a.home.gy, name: a.name }));
+    ISO.drawCableHub(isoStations, accentsByName);
     drawActors(t);
+    ISO.drawBloomPass(() => ISO.drawSign()); // мягкое цветение вывески поверх уже готовой сцены
   }
 
   // именные акценты поверх спрайта (волосы на плечах, имплант, led-полосы, наплечник, неоновые воротники) —
@@ -1091,13 +2086,13 @@
       o.globalAlpha = 1;
       const em = pixelBox(7, 9, HS); o.fillStyle = pal.emblem; o.fillRect(x + em.x, y + em.y, S(2), S(2)); // жёлтая эмблема
     } else if (name === 'pam') {
-      const sh = pixelBox(11, 8, HS); o.fillStyle = pal.shoulder; o.fillRect(x + sh.x, y + sh.y, S(3), S(3)); // розовый наплечник
-      const glow = 0.55 + 0.45 * Math.sin(t / 480); // бирюзовый неон-воротник
+      const sh = pixelBox(11, 8, HS); o.fillStyle = pal.shoulder; o.fillRect(x + sh.x, y + sh.y, S(3), S(3)); // розовая пуговица кардигана
+      const glow = 0.5 + 0.3 * Math.sin(t / 480); // тёплый блик на отвороте кардигана (вместо неон-пульса)
       const c1 = pixelBox(4, 8, HS), c2 = pixelBox(11, 8, HS);
       o.globalAlpha = glow; o.fillStyle = pal.neon;
       o.fillRect(x + c1.x, y + c1.y, (c2.x + c2.w) - c1.x, c1.h);
       o.globalAlpha = 1;
-      const er = pixelBox(2, 5, HS); o.fillStyle = pal.neon; o.fillRect(x + er.x, y + er.y, S(1), S(1)); // серьга
+      const pen = pixelBox(2, 5, HS); o.fillStyle = '#e8b64a'; o.fillRect(x + pen.x, y + pen.y, S(1), S(1)); // кончик карандаша за ухом
     }
   }
 
@@ -1108,6 +2103,9 @@
     return phase < 400 ? -1 : 1;
   }
 
+  // фолбэк-рендер для безымянного агента без своего детального битмапа (BIG.sprites) — старый плоский
+  // 16-колоночный спрайт, как до изометрической переделки. Именные агенты (michael/dwight/pam/ralph)
+  // рисуются не отсюда, а напрямую из drawActors через ISO.drawBillboard — этот путь для них не используется
   function drawHuman(a, t) {
     const i = agents.indexOf(a);
     const pal = CHAR_PALETTE[a.name];
@@ -1121,12 +2119,12 @@
     else if (a.state === 'failed') pose = 'failed';
     else if (a.state === 'done') pose = 'done';
     const rows = humanRows(pose, head);
-    const { w, h } = spriteSize(rows, HS);
     // агент всегда на своём месте (a.home) — не ходит; дефолтная поза смотрит вперёд (dir=1). Пока кот
     // визитит его стол (cat.deskGoal === a.name), агент поворачивается к коту и возвращается после его ухода —
     // направление считается заново каждый кадр, отдельное поле на агенте не нужно
     const visitingCat = cats.find(c => c.deskGoal === a.name);
     const dir = visitingCat ? visitingCat.deskSide : (a.state === 'idle' ? idleGlanceDir(t, i) : 1);
+    const { w, h } = spriteSize(rows, HS);
     // лёгкое дыхание в простое — синусоидальное покачивание всего силуэта по вертикали на 1 «пиксель»
     const breathe = a.state === 'idle' ? Math.round(Math.sin(t / 900 + i) * S(1)) : 0;
     const x = Math.round(a.x) - Math.round(w / 2), y = Math.round(a.y) - h - S(8) + breathe;
